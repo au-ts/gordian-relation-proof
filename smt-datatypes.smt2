@@ -8,17 +8,18 @@
 
 ; (declare-datatype List (par (A) ( (nil) (cons (head A) (tail (List A))))  ))
 
-; (declare-datatype Option (par (A) ( (nothing ) (just (x A)))))
+(declare-datatype Option (par (A) ( (nothing ) (just (x A)))))
 
 (declare-datatype Prod (par (X Y) ((prod (fst X) (snd Y)))))
 
 ; (define-fun a () Color red)
 
-; (declare-fun oi () (Option Int))
+(declare-fun oi () (Option Int))
 
 ; (assert (= oi nothing))
 
-; (assert (or (= oi (just 2)) ((_ is nothing) oi)))
+(assert (or (= oi (just 2)) ((_ is nothing) oi)))
+(assert ((_ is nothing) (just 2)))
 
 (define-fun c () Color red)
 (assert ((_ is red) c))
