@@ -128,7 +128,9 @@
         (mi_valid_inlets (Array Inlet Bool))
         (mi_valid_comms (Array Comm Bool))
         (mi_valid_irqns (Array Inlet Bool))
-        (mi_prio (Array PD (Maybe Prio))) ; why a maybe?
+        ; why a maybe? Passive servers don't have a scheduling context, that
+        ; is, they don't necessarily have a priority
+        (mi_prio (Array PD (Maybe Prio)))
         (mi_mmrs (Array MMR Bool))
         (mi_provides_pp (Array PD Bool)))
 ))
@@ -144,6 +146,7 @@
         (select (mi_valid_inlets mi) (snd comm))
     )))
 )
+
 (define-fun wf_MicrokitInvariants_3 ((mi MicrokitInvariants)) Bool
     (forall ((comm Comm)) (=> (select (mi_valid_comms mi) comm)
                               (select (mi_valid_comms mi) (Prod (snd comm) (fst comm)))))
@@ -340,8 +343,54 @@
 ; Relation MicrokitState
 ;
 
-(define-fun relation_pd_input_cap ((pd PD) (cnode SeL4_CNode)) Bool )
 
+; There's a mistake in the Haskell here. The input cap is always an endpoint
+; cap, not a notification cap.
+(define-fun relation_pd_input_cap ((pd PD) (cap SeL4_Cap)) Bool
+    (match cap (
+        ; FIXME 1: Endpoint could change (fix:objref)
+        ;
+        ; this isn't strong enough it just asserts that an endpoint cap is
+        ; there but what if a syscall replaces it with a different endpoint?
+        ; That would break correctness, but this relation wouldn't break.
+        ;
+        ; possible idea: set an arbitary, global variable
+        ; (PD -> InputCapObjRef) Even without knowing _what_ the object ref
+        ; is, we can assert that it never changes.
+        ;
+        ; If I don't come up with a better idea, I will implement this.
+        ; (delaying allows me to see what are all the places where I will
+        ; need this)
+        ;
+        ; FIXME 2: Need to make sure that the endpoint is bound to the PD's TCB
+        ;
+        ; Note: do we care about the endpoint's badge? I don't think so
+        ; because we don't ever _send_ using this cap, we always receive from
+        ; it.
+        ((SeL4_Cap_Endpoint ep_objref ep_badge ep_cap_rights) true)
+        (x false)
+    ))
+)
+
+(define-fun relation_comm_notification_cap ((target_inlet Inlet) (cap SeL4_Cap)) Bool
+    (let ((pd (fst target_inlet))
+          (ch (snd target_inlet)))
+        (match cap (
+            ; FIXME 1: check obj_ref (fix:objref)
+            ((SeL4_Cap_Notification obj_ref badge ?) (= badge (bvshl (_ bv1 64) (ch2word ch))))
+            (? false)
+        ))
+    )
+)
+
+(define-fun relation_comm_endpoint_cap ((inlet Inlet) (cap SeL4_Cap)) Bool
+    ; FIXME: encode relation comm endpoint cap
+    true
+)
+
+
+; FIXME: encode relation irq cap
+(define-fun relation_is_irq_cap ((cap SeL4_Cap)) Bool true)
 (define-fun relation_cap_map ((mi MicrokitInvariants) (pd PD) (ks KernelState)) Bool (and
 
     ; we must have an endpoint cap
@@ -353,35 +402,39 @@
     (forall ((comm Comm)) (let ((pd/ (fst (fst comm)))
                                 (ch (snd (fst comm)))
                                 (target (snd comm))
-                                (cnode (kc_thread_cnode kc)))
+                                (cnode (ks_thread_cnode ks)))
         (and
-            (=> (mi_valid_comms comm)
+            (=> (select (mi_valid_comms mi) comm)
                 (= pd pd/)
                 (relation_comm_notification_cap target
-                    (select cnode (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))))))
-            (=> (mi_valid_comms comm)
+                    (select cnode (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch)))))
+            (=> (select (mi_valid_comms mi) comm)
                 (= pd pd/)
                 (select (mi_provides_pp mi) (fst target))
-                (bvlt (select (mi_prio mi) pd) (select (mi_prio mi) (fst target)))
+                ; NOTE: it is safe to call `just` on the maybe type, because
+                ; it is an invariant that each priority of all PDs is not
+                ; nothing is not nothing. If we get this wrong, the entire
+                ; (just ...) expressions will evaluate to an _arbitrary_
+                ; value of the same type (SMT-LIB 2, 5.3, definition 8.
+                ; Remark 11 spells it out), and thus would prevent any proof
+                ; from going through.
+                (bvult (just (select (mi_prio mi) pd)) (just (select (mi_prio mi) (fst target))))
                 (relation_comm_endpoint_cap target
-                    (select cnode (bvadd BASE_ENDPOINT_CAP))))
+                    (select cnode (bvadd BASE_ENDPOINT_CAP (ch2word ch)))))
+        )
     ))
 
     ; must have a cap to the corresponding IRQ notification words
     (forall ((inlet Inlet)) (let ((pd/ (fst inlet))
                                   (ch (snd inlet)))
         (=> (= pd pd/)
-            (relation_is_irq_cap (select (kc_thread_cnode kc)
+            (relation_is_irq_cap (select (ks_thread_cnode ks)
                                     (bvadd BASE_IRQ_CAP (ch2word ch)))))
     ))
 
 ))
 
-; TODO
-(define-fun relation_pd_obj_ref ((pd PD) (objref SeL4_ObjRef)) Bool true)
 
-; ; There's a mistake in the Haskell here. The input cap is always an endpoint
-; ; cap, not a notification cap.
 ; (define-fun relation_pd_input_cap ((pd PD) (cap SeL4_Cap)) Bool
 ;     ; (ite ((_ is SeL4_Cap_Notification) cap)
 ;     ;     (relation_pd_obj_ref pd (ntf_objref cap))
