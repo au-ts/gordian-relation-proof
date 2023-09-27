@@ -69,10 +69,10 @@
 ))
 
 
-(define-fun seL4_Signal/pre/specific ((ks KernelState) (cap SeL4_CPtr)) Bool
+(define-fun seL4_Signal/pre/specific ((cap SeL4_CPtr) (ks KernelState)) Bool
     (is-SeL4_Cap_Notification (select (ks_thread_cnode ks) cap))
 )
-(define-fun seL4_Signal/post/specific () Bool true)
+(define-fun seL4_Signal/post/specific ((cap SeL4_CPtr) (ks KernelState) (ks/next KernelState)) Bool (= ks ks/next))
 
 
 
@@ -180,12 +180,12 @@
 (define-fun wf_MicrokitInvariants ((mi MicrokitInvariants)) Bool (and
     true
     (wf_MicrokitInvariants_1 mi)
-    ; (wf_MicrokitInvariants_2 mi)
-    ; (wf_MicrokitInvariants_3 mi)
-    ; (wf_MicrokitInvariants_4 mi)
-    ; (wf_MicrokitInvariants_5 mi)
-    ; (wf_MicrokitInvariants_6 mi)
-    ; (wf_MicrokitInvariants_7 mi)
+    (wf_MicrokitInvariants_2 mi)
+    (wf_MicrokitInvariants_3 mi)
+    (wf_MicrokitInvariants_4 mi)
+    (wf_MicrokitInvariants_5 mi)
+    (wf_MicrokitInvariants_6 mi)
+    (wf_MicrokitInvariants_7 mi)
 ))
 
 (declare-datatype NextRecv (
@@ -502,7 +502,37 @@
     (exists ((comm Comm)) (and (select (mi_valid_comms (mi ms)) comm)
                                (= (fst comm) (Prod (ms_running_pd ms) ch))))
 )
-(define-fun microkit_notify/post/specific ((ms MicrokitState)) Bool true)
+(define-fun microkit_notify/post/specific ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool (= ms ms/next))
+; This might seem a bit silly, but here's the rationale:
+;
+; We have an abstract state. Each function updates the concrete state
+; (kernel) and the abstract state (microkit). The abstract state is updated
+; by "ghost code" in the body of the function. We then have an invariant
+; (relation) which must hold between the concrete and abstract state, and pre
+; and post condition which can depend on both the concrete and abstract
+; state.
+;
+; The haskell spec describes the ghost code and the post condition for the
+; abstract state in one go (it's the same thing). But it doesn't have to be
+; (post condition might say more than what the ghost code does). Hence why we
+; split them up.
+;
+; When verifying a function, we assuming the abstract-update (ie. run the
+; ghost code), and then prove the post condition. In _this_ case, it just
+; means assuming ms=ms/next and then proving ms=ms/next.
+(define-fun microkit_notify/abstract-update ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool (= ms ms/next))
+
+; ; check that we don't have an obvious contradiction
+;
+; (push)
+;     (declare-const ks KernelState)
+;     (declare-const ms MicrokitState)
+
+;     (echo "Should be sat")
+;     (assert (wf_MicrokitInvariants (mi ms)))
+;     (assert (relation ms ks))
+;     (check-sat)
+; (pop)
 
 (push) ; verify microkit_notify
     (declare-const ks KernelState)
@@ -511,34 +541,42 @@
     (declare-const ms/next MicrokitState)
     (declare-const ch Ch)
 
-    ; (get-info :reason-unknown)
-
     ; static inline void
     ; sel4cp_notify(sel4cp_channel ch)
     ; {
     ;     seL4_Signal(BASE_OUTPUT_NOTIFICATION_CAP + ch);
     ; }
     ;
-
     ; need to prove that the notify's precondition implies signal's precondition
     ; and the signal's post condition implies notify's post condition
 
-    ; (assert (distinct ch (just (word2ch (ch2word ch)))))
-    ; (check-sat)
-
-    ; (assert (= (just (word2ch (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch)))) ch))
-    ; (check-sat)
-    ; (get-model)
-
-
+    (push)
+        ; FIXME: prove no overflow
+        (assert (not (=> (relation ms ks)
+                         (wf_MicrokitInvariants (mi ms))
+                         (microkit_notify/pre/specific ch ms)
+                         (seL4_Signal/pre/specific
+                            (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))
+                            ks))
+        ))
+        (check-sat)
+    (pop)
 
     (push)
         (assert (not (=> (relation ms ks)
                          (wf_MicrokitInvariants (mi ms))
-                         (microkit_notify/pre/specific ch ms)
-                         (seL4_Signal/pre/specific ks
-                            (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))))
-        ))
+                         (seL4_Signal/post/specific
+                            (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))
+                            ks
+                            ks/next)
+                         (microkit_notify/post/specific ch ms ms/next)
+                         (microkit_notify/abstract-update ch ms ms/next)
+                         (and
+                            (microkit_notify/post/specific ch ms ms/next)
+                            (relation ms/next ks/next)
+                            (wf_MicrokitInvariants (mi ms/next))
+                         )
+         )))
         (check-sat)
     (pop)
 
