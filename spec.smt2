@@ -1,4 +1,5 @@
 (set-logic ALL)
+; (set-option :incremental true)
 (set-option :produce-models true)
 
 
@@ -69,7 +70,7 @@
 
 
 (define-fun seL4_Signal/pre/specific ((ks KernelState) (cap SeL4_CPtr)) Bool
-    ((_ is SeL4_Cap_Notification) (select (ks_thread_cnode ks) cap))
+    (is-SeL4_Cap_Notification (select (ks_thread_cnode ks) cap))
 )
 (define-fun seL4_Signal/post/specific () Bool true)
 
@@ -167,7 +168,7 @@
 
 (define-fun wf_MicrokitInvariants_6 ((mi MicrokitInvariants)) Bool
     (forall ((pd PD)) (=> (select (mi_valid_pds mi) pd)
-                          (not ((_ is Nothing) (select (mi_prio mi) pd)))))
+                          (not (is-Nothing (select (mi_prio mi) pd)))))
 )
 
 (define-fun wf_MicrokitInvariants_7 ((mi MicrokitInvariants)) Bool
@@ -177,13 +178,14 @@
 
 
 (define-fun wf_MicrokitInvariants ((mi MicrokitInvariants)) Bool (and
+    true
     (wf_MicrokitInvariants_1 mi)
-    (wf_MicrokitInvariants_2 mi)
-    (wf_MicrokitInvariants_3 mi)
-    (wf_MicrokitInvariants_4 mi)
-    (wf_MicrokitInvariants_5 mi)
-    (wf_MicrokitInvariants_6 mi)
-    (wf_MicrokitInvariants_7 mi)
+    ; (wf_MicrokitInvariants_2 mi)
+    ; (wf_MicrokitInvariants_3 mi)
+    ; (wf_MicrokitInvariants_4 mi)
+    ; (wf_MicrokitInvariants_5 mi)
+    ; (wf_MicrokitInvariants_6 mi)
+    ; (wf_MicrokitInvariants_7 mi)
 ))
 
 (declare-datatype NextRecv (
@@ -335,7 +337,7 @@
       (ite (= wch (_ bv62 64)) (Just Ch62)
       (as Nothing (Maybe Ch))
     ))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
-    (define-fun word_is_valid_ch ((wch Word64)) Bool ((_ is Just) (word2ch wch)))
+    (define-fun word_is_valid_ch ((wch Word64)) Bool (is-Just (word2ch wch)))
 ; END OF AUTO GENERATED
 
 
@@ -368,7 +370,7 @@
         ; because we don't ever _send_ using this cap, we always receive from
         ; it.
         ((SeL4_Cap_Endpoint ep_objref ep_badge ep_cap_rights) true)
-        (x false)
+        (? false)
     ))
 )
 
@@ -393,8 +395,11 @@
 (define-fun relation_is_irq_cap ((cap SeL4_Cap)) Bool true)
 (define-fun relation_cap_map ((mi MicrokitInvariants) (pd PD) (ks KernelState)) Bool (and
 
+    ; true
+
     ; we must have an endpoint cap
     (relation_pd_input_cap pd (select (ks_thread_cnode ks) (_ bv1 64)))
+
 
     ; if we have a communication channel
     ;     1. we must have a cap to the notification word
@@ -464,9 +469,9 @@
     (mso NextRecv)
     (kso (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn)))) Bool
 
-    (ite (and ((_ is NR_Unknown) mso) ((_ is Nothing) kso))
+    (ite (and (is-NR_Unknown mso) (is-Nothing kso))
         true
-    (ite (and ((_ is NR_Notification) mso) ((_ is Just) kso))
+    (ite (and (is-NR_Notification mso) (is-Just kso))
         (let ((raised_flags (flags mso))
               (krnl_badge (snd (just kso))))
             ; (= krnl_badge (raised_flags2kernel_badge raised_flags))
@@ -481,10 +486,12 @@
 )
 
 (define-fun relation ((ms MicrokitState) (ks KernelState)) Bool
-    (and (relation_cap_map (mi ms) (ms_running_pd ms) ks)
+    (and
+         (relation_cap_map (mi ms) (ms_running_pd ms) ks)
          (relation_mmrs_mem (mi ms) ks)
          (relation_reply_cap ms ks)
-         (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks)))
+         (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks))
+    )
 )
 
 ;
@@ -504,6 +511,8 @@
     (declare-const ms/next MicrokitState)
     (declare-const ch Ch)
 
+    ; (get-info :reason-unknown)
+
     ; static inline void
     ; sel4cp_notify(sel4cp_channel ch)
     ; {
@@ -521,9 +530,11 @@
     ; (check-sat)
     ; (get-model)
 
+
+
     (push)
-        ; relation isn't strong enough to ensure that there is a cap!
         (assert (not (=> (relation ms ks)
+                         (wf_MicrokitInvariants (mi ms))
                          (microkit_notify/pre/specific ch ms)
                          (seL4_Signal/pre/specific ks
                             (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))))
