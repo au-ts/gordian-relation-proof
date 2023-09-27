@@ -359,6 +359,8 @@
             ; Note: do we care about the endpoint's badge? I don't think so
             ; because we don't ever _send_ using this cap, we always receive from
             ; it.
+            ;
+            ; FIXME 3: check cap rights
             ((SeL4_Cap_Endpoint ep_objref ep_badge ep_cap_rights) true)
             (? false)
         ))
@@ -369,23 +371,39 @@
               (ch (snd target_inlet)))
             (match cap (
                 ; FIXME 1: check obj_ref (fix:objref)
+                ; FIXME 2: check cap rights
                 ((SeL4_Cap_Notification obj_ref badge ?) (= badge (bvshl (_ bv1 64) (ch2word ch))))
                 (? false)
             ))
         )
     )
 
-    (define-fun relation_comm_endpoint_cap ((inlet Inlet) (cap SeL4_Cap)) Bool
+    (define-fun relation_comm_endpoint_cap ((target_inlet Inlet) (cap SeL4_Cap)) Bool
         ; FIXME: encode relation comm endpoint cap
-        true
+        (let ((target_ch_number (snd target_inlet))
+              (one63 (bvshl (_ bv1 64) (_ bv63 64))))
+            (match cap (
+                ((SeL4_Cap_Endpoint obj_ref badge ?) (and
+                    ; FIXME 1: check obj_ref (fix:objref)
+                    ; FIXME 2: check cap rights
+                    (= badge (bvor one63 (ch2word target_ch_number)))
+                ))
+                (? false)
+            ))
+        )
     )
 
 
-    ; FIXME: encode relation irq cap
-    (define-fun relation_is_irq_cap ((cap SeL4_Cap)) Bool true)
-    (define-fun relation_cap_map ((mi MicrokitInvariants) (pd PD) (ks KernelState)) Bool (and
+    ; DONE
+    (define-fun relation_is_irq_cap ((cap SeL4_Cap)) Bool
+        (match cap (
+            ((SeL4_Cap_IRQHandler ?) true)
+            (? false)
+        ))
+    )
 
-        ; true
+    ; DONE
+    (define-fun relation_cap_map ((mi MicrokitInvariants) (pd PD) (ks KernelState)) Bool (and
 
         ; we must have an endpoint cap
         (relation_pd_input_cap pd (select (ks_thread_cnode ks) (_ bv1 64)))
@@ -428,18 +446,6 @@
         ))
 
     ))
-
-
-    ; (define-fun relation_pd_input_cap ((pd PD) (cap SeL4_Cap)) Bool
-    ;     ; (ite ((_ is SeL4_Cap_Notification) cap)
-    ;     ;     (relation_pd_obj_ref pd (ntf_objref cap))
-    ;     ; false)
-    ;     (ite ((_ is SeL4_Cap_Endpoint) cap)
-    ;          (relation_pd_obj_ref ) ; TODO: check cap rights
-    ;     ; else
-    ;          false
-    ;     )
-    ; )
 
     (define-fun relation_mmrs_mem ((mi MicrokitInvariants) (ks KernelState)) Bool
         (forall ((addr Word64) (r MMR))
