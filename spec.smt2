@@ -600,13 +600,30 @@
             ((_ update-field ks_reply_obj_has_cap) ks ks_reply_obj_has_cap/) ks_local_mem/))
     ))))
 
+    ; (declare-const empty_ch_set (Array Ch Bool))
+    ; (assert (forall ((ch Ch)) (not (select empty_ch_set ch))))
+
     ; FIXME: TODO
     (define-fun _microkit_recv/pre/specific (
         (cap SeL4_CPtr)
         (badge_ptr Word64)
         (reply_cap SeL4_CPtr)
         (ms MicrokitState)
-    ) Bool true)
+    ) Bool (and
+        (not (is-NR_Unknown (ms_recv_oracle ms)))
+
+        ; z3 doesn't like this way of expressing things, so instead of use
+        ; exists quantifier
+        ;
+        ; (distinct (ms_recv_oracle ms) (NR_Notification empty_ch_set))
+
+        (=> (is-NR_Notification (ms_recv_oracle ms))
+            (exists ((ch Ch)) (select (flags (ms_recv_oracle ms)) ch)))
+        (not (exists ((ch Ch)) (select (ms_unhandled_notified ms) ch)))
+
+        (is-Nothing (ms_unhandled_ppcall ms))
+        (is-Nothing (ms_unhandled_reply ms))
+    ))
 
     ; FIXME: TODO
     (define-fun _microkit_recv/abstract-update (
