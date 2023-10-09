@@ -146,6 +146,12 @@ seL4_Recv_wp cap badge_ptr reply_cap prop kc = and
   , case kc_thread_cnode kc reply_cap of
       SeL4_Cap_Reply _ _ _  -> True -- TODO: check rights
       --SeL4_Cap_Null -> True -- TODO: no cap to reply object, is that okay?
+      --
+      -- mathieu: it has to be ok, because otherwise how are you suppose to
+      -- call Recv the first time? (TODO: confirm that the initially the
+      -- reply cap is Null. Looking at the recieve_ipc, it is indeed fine
+      -- because (1) null_cap leads to no reply object. (2) no reply object
+      -- is allowed on the BlockedOnReceive TCP state).
       _ -> False
   , kc_recv_oracle kc /= Nothing
   , prop rv kc'

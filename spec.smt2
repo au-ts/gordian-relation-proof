@@ -1,4 +1,4 @@
-(set-logic ALL)
+ (set-logic ALL)
 ; (set-option :incremental true)
 (set-option :produce-models true)
 
@@ -15,56 +15,63 @@
 ; KERNEL ABSTRACT SPEC
 ;
 
-(define-sort SeL4_ObjRef () Word64)
+    (define-sort SeL4_ObjRef () Word64)
 
-(declare-datatype SeL4_CapRights (
-    (SeL4_CapRights_mk (cr_send Bool) (cr_recv Bool) (cr_grant Bool) (cr_grant_reply Bool))
-))
+    (declare-datatype SeL4_CapRights (
+        (SeL4_CapRights_mk (cr_send Bool) (cr_recv Bool) (cr_grant Bool) (cr_grant_reply Bool))
+    ))
 
-(define-sort SeL4_IRQ () Word64)
+    (define-sort SeL4_IRQ () Word64)
 
-(declare-datatype SeL4_Cap (
-    (SeL4_Cap_Null)
-    (SeL4_Cap_Endpoint (ep_objref SeL4_ObjRef) (ep_badge Word64) (ep_cap_rights SeL4_CapRights))
-    (SeL4_Cap_Notification (ntf_objref SeL4_ObjRef) (ntf_badge Word64) (ntf_cap_rights SeL4_CapRights))
-    (SeL4_Cap_Reply (rep_objref SeL4_ObjRef) (rep_what Bool) (rep_cap_rights SeL4_CapRights))
-    (SeL4_Cap_IRQHandler (irq SeL4_IRQ))
-))
-
-
-(define-sort SeL4_CPtr () Word64)
-
-(define-sort SeL4_CNode () (Array SeL4_CPtr SeL4_Cap))
-
-(define-sort SeL4_CSpace () SeL4_CNode)
-
-(declare-datatype SeL4_MessageInfo (
-    (SeL4_MessageInfo (SeL4_mi_length Word64)
-                      (SeL4_mi_extra_caps Word64)
-                      (SeL4_mi_caps_unwrapped Word64)
-                      (SeL4_mi_label (_ BitVec 16))))
-)
-
-(define-sort SeL4_Ntfn () Word64)
-
-(define-sort Mem () (Array Word64 Word64))
+    (declare-datatype SeL4_Cap (
+        (SeL4_Cap_Null)
+        (SeL4_Cap_Endpoint (ep_objref SeL4_ObjRef) (ep_badge Word64) (ep_cap_rights SeL4_CapRights))
+        (SeL4_Cap_Notification (ntf_objref SeL4_ObjRef) (ntf_badge Word64) (ntf_cap_rights SeL4_CapRights))
+        (SeL4_Cap_Reply (rep_objref SeL4_ObjRef) (rep_what Bool) (rep_cap_rights SeL4_CapRights))
+        (SeL4_Cap_IRQHandler (irq SeL4_IRQ))
+    ))
 
 
-(declare-datatype KernelState (
-    (KS (ks_thread_cnode SeL4_CNode)
-        (ks_reply_obj_has_cap SeL4_CNode)
-        (ks_recv_oracle (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn)))
-        (ks_local_mem Mem)
-        (ks_local_mem_writable (Array Word64 Bool))
-        (ks_local_mem_safe (Array Word64 Bool))
+    (define-sort SeL4_CPtr () Word64)
+
+    (define-sort SeL4_CNode () (Array SeL4_CPtr SeL4_Cap))
+
+    (define-sort SeL4_CSpace () SeL4_CNode)
+
+    (declare-datatype SeL4_MessageInfo (
+        (SeL4_MessageInfo (SeL4_mi_length Word64)
+                          (SeL4_mi_extra_caps Word64)
+                          (SeL4_mi_caps_unwrapped Word64)
+                          (SeL4_mi_label (_ BitVec 16))))
     )
-))
+
+    (define-sort SeL4_Ntfn () Word64)
+
+    (define-sort Mem () (Array Word64 Word64))
+
+    (declare-datatype KernelState (
+        (KS (ks_thread_cnode SeL4_CNode)
+            ; Mathieu: I suppose we want to allow a thread to hold multiple
+            ; reply objects (eventhough right now the microkit never does
+            ; this)?
+            ;
+            ; This is a really weird name
+            (ks_reply_obj_has_cap (Array SeL4_Cap Bool))
+            (ks_recv_oracle (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn)))
+            (ks_local_mem Mem)
+            (ks_local_mem_writable (Array Word64 Bool))
+            (ks_local_mem_safe (Array Word64 Bool))
+        )
+    ))
 
 ;
 ; MICROKIT SPEC
 ;
 
     ; microkit constants
+    (define-fun INPUT_CAP () SeL4_CPtr (_ bv1 64))
+    (define-fun REPLY_CAP () SeL4_CPtr (_ bv4 64))
+
     (define-fun BASE_OUTPUT_NOTIFICATION_CAP () Word64 (_ bv10 64))
     (define-fun BASE_ENDPOINT_CAP () Word64 (_ bv74 64))
     (define-fun BASE_IRQ_CAP () Word64 (_ bv138 64))
@@ -168,7 +175,6 @@
 
 
     (define-fun wf_MicrokitInvariants ((mi MicrokitInvariants)) Bool (and
-        true
         (wf_MicrokitInvariants_1 mi)
         (wf_MicrokitInvariants_2 mi)
         (wf_MicrokitInvariants_3 mi)
@@ -176,6 +182,8 @@
         (wf_MicrokitInvariants_5 mi)
         (wf_MicrokitInvariants_6 mi)
         (wf_MicrokitInvariants_7 mi)
+        ; TODO: ensure memory safe is actually safe (only current PD can write
+        ; to it)
     ))
 
     (declare-datatype NextRecv (
@@ -336,8 +344,11 @@
 ;
 
 
-    ; There's a mistake in the Haskell here. The input cap is always an endpoint
-    ; cap, not a notification cap.
+    ; FIXME: There's a mistake in the Haskell here. The input cap is always an
+    ; endpoint cap, not a notification cap.
+    ;
+    ; This is where we will ensure that we have an endpoint cap, and that our
+    ; notification cap is bound to our TCB
     (define-fun relation_pd_input_cap ((pd PD) (cap SeL4_Cap)) Bool
         (match cap (
             ; FIXME 1: Endpoint could change (fix:objref)
@@ -406,7 +417,7 @@
     (define-fun relation_cap_map ((mi MicrokitInvariants) (pd PD) (ks KernelState)) Bool (and
 
         ; we must have an endpoint cap
-        (relation_pd_input_cap pd (select (ks_thread_cnode ks) (_ bv1 64)))
+        (relation_pd_input_cap pd (select (ks_thread_cnode ks) INPUT_CAP))
 
 
         ; if we have a communication channel
@@ -471,12 +482,23 @@
         (ite (and (is-NR_Notification mso) (is-Just kso))
             (let ((raised_flags (flags mso))
                   (krnl_badge (snd (just kso))))
-                ; (= krnl_badge (raised_flags2kernel_badge raised_flags))
-                ; (forall ((i Integer)) (=> (corresponding_channel i) ()))
-                true ; TODO
+
+                ; ASSUMPTION: num_bits(krnl_badge)=64 < 2^64 (obviously true)
+                ;
+                ; We prove: for all bit in the kernel badge, it is 1 iff there
+                ; is a corresponding flag and the flag is raised
+                (forall ((idx (_ BitVec 64)))
+                    (=
+                        (= ((_ extract 0 0) (bvshl krnl_badge idx)) (_ bv1 1))
+                        (and
+                            (is-Just (word2ch idx))
+                            (select raised_flags (just (word2ch idx)))
+                        )
+                    )
+                )
             )
         (ite ((_ is NR_PPCall) mso)
-            true ; TODO
+            true ; FIXME: figure out and implement
         ; else
             false
         )))
@@ -488,6 +510,7 @@
              (relation_mmrs_mem (mi ms) ks)
              (relation_reply_cap ms ks)
              (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks))
+             true
         )
     )
 
@@ -529,6 +552,64 @@
     (define-fun microkit_notify/abstract-update ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool (= ms ms/next))
 
 
+    ; ------------------------------
+
+    ; FIXME: TODO
+    (define-fun seL4_Recv/pre/specific (
+        (cap SeL4_CPtr)
+        (badge_ptr Word64)
+        (reply_cap SeL4_CPtr)
+        (ks KernelState)
+    ) Bool (and
+        (= (select (ks_thread_cnode ks) cap) (select (ks_thread_cnode ks) INPUT_CAP))
+        (select (ks_local_mem_writable ks) badge_ptr)
+        (or ((_ is SeL4_Cap_Reply) (select (ks_thread_cnode ks) cap))
+            ((_ is SeL4_Cap_Null) (select (ks_thread_cnode ks) cap)))
+        (is-Just (ks_recv_oracle ks))
+    ))
+
+    ; FIXME: TODO
+    (define-fun seL4_Recv/post/specific (
+        (cap SeL4_CPtr)
+        (badge_ptr Word64)
+        (reply_cap SeL4_CPtr)
+        (ks KernelState)
+
+        (ret SeL4_MessageInfo)
+        (ks/next KernelState)
+    ) Bool true)
+
+    ; FIXME: TODO
+    (define-fun _microkit_recv/pre/specific (
+        (cap SeL4_CPtr)
+        (badge_ptr Word64)
+        (reply_cap SeL4_CPtr)
+        (ms MicrokitState)
+    ) Bool true)
+
+    ; FIXME: TODO
+    (define-fun _microkit_recv/abstract-update (
+        (cap SeL4_CPtr)
+        (badge_ptr Word64)
+        (reply_cap SeL4_CPtr)
+        (ms MicrokitState)
+
+        (ms/next MicrokitState)
+    ) Bool true)
+
+    ; FIXME: TODO
+    (define-fun _microkit_recv/post/specific (
+        (cap SeL4_CPtr)
+        (badge_ptr Word64)
+        (reply_cap SeL4_CPtr)
+        (ms MicrokitState)
+
+        (ret SeL4_MessageInfo)
+        (ms/next MicrokitState)
+    ) Bool true)
+
+
+
 ;
 ; Verification
 ;
@@ -545,11 +626,12 @@
     ;     (check-sat)
     ; (pop)
 
+    (declare-const ks KernelState)
+    (declare-const ks/next KernelState)
+    (declare-const ms MicrokitState)
+    (declare-const ms/next MicrokitState)
     (push) ; verify microkit_notify
-        (declare-const ks KernelState)
-        (declare-const ks/next KernelState)
-        (declare-const ms MicrokitState)
-        (declare-const ms/next MicrokitState)
+
         (declare-const ch Ch)
 
         ; static inline void
@@ -590,3 +672,59 @@
             (check-sat)
         (pop)
     (pop)
+
+
+    ; to prove (a && b) --> (c && d)
+    ; you can (assert (not (=> a b (and c d)))) (and get unsat)
+    ;
+    ; or you can (more readable)
+    ;
+    ;    (assert a)
+    ;    (assert b)
+    ;    (assert (not (and c d)))
+    ;
+    ; proof !((a && b) --> (c && d)) = !(!(a && b) || (c && d))
+    ;                                = (a && b) && !(c && d)
+
+    (push) ; verify recv
+        (declare-const cap SeL4_CPtr)
+        (declare-const badge_ptr Word64)
+        (declare-const reply_cap SeL4_CPtr)
+        (declare-const ret SeL4_MessageInfo)
+
+        (push) ; prove pre condition is established
+            (assert (relation ms ks))
+            (assert (wf_MicrokitInvariants (mi ms)))
+            (assert (_microkit_recv/pre/specific cap badge_ptr reply_cap ms))
+            (echo "?? recv pre condition")
+            (check-sat)
+            (assert (not (seL4_Recv/pre/specific cap badge_ptr reply_cap ks)))
+            (echo "!! recv pre condition")
+            (check-sat)
+        (pop)
+
+        (push) ; prove post condition is established
+            (assert (relation ms ks))
+            (assert (wf_MicrokitInvariants (mi ms)))
+            (assert (_microkit_recv/pre/specific cap badge_ptr reply_cap ms))
+            (assert (_microkit_recv/abstract-update cap badge_ptr reply_cap ms ms/next))
+
+            (echo "?? recv pre condition")
+            (check-sat)
+            (assert (not (and
+                (_microkit_recv/post/specific cap badge_ptr reply_cap ms ret ms/next)
+                (relation ms/next ks/next)
+                (wf_MicrokitInvariants (mi ms))
+            )))
+            (echo "!! recv post condition")
+            (check-sat)
+        (pop)
+
+    (pop)
+
+;
+; Tests
+;
+; (push)
+;     (assert (forall ((i (_ BitVec 8))) (bvshl)  ))
+; (pop)
