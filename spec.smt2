@@ -568,7 +568,6 @@
         (is-Just (ks_recv_oracle ks))
     ))
 
-    ; FIXME: TODO
     (define-fun seL4_Recv/post/specific (
         (cap SeL4_CPtr)
         (badge_ptr Word64)
@@ -577,7 +576,29 @@
 
         (ret SeL4_MessageInfo)
         (ks/next KernelState)
-    ) Bool true)
+    ) Bool (and
+        ((_ is-Just) (ks_recv_oracle ks))
+
+        (let (
+            (rv (fst (the (ks_recv_oracle ks))))
+            (badge_val (snd (the (ks_recv_oracle ks))))
+            (two63 (bvshl (_ bv1 64) (_ bv63 64)))
+        )
+
+        (let (
+            (ks_reply_obj_has_cap/
+                (store (ks_reply_obj_has_cap ks)
+                    (select (ks_thread_cnode ks) reply_cap)
+                    (bvuge badge_val two63))
+                ; add or remove reply_cap from reply_obj_has_cap set depending
+                ; on whether we received a PP call
+            )
+            (ks_local_mem/ (store (ks_local_mem ks) badge_ptr badge_val))
+        )
+
+        (= ks/next ((_ update-field ks_local_mem)
+            ((_ update-field ks_reply_obj_has_cap) ks ks_reply_obj_has_cap/) ks_local_mem/))
+    ))))
 
     ; FIXME: TODO
     (define-fun _microkit_recv/pre/specific (
