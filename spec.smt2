@@ -8,7 +8,7 @@
 ;
 
     (define-sort Word64 () (_ BitVec 64))
-    (declare-datatype Maybe (par (X) ((Nothing) (Just (just X)))))
+    (declare-datatype Maybe (par (X) ((Nothing) (Just (the X)))))
     (declare-datatype Prod (par (X Y) ((Prod (fst X) (snd Y)))))
 
 ;
@@ -438,11 +438,11 @@
                     ; NOTE: it is safe to call `just` on the maybe type, because
                     ; it is an invariant that each priority of all PDs is not
                     ; nothing is not nothing. If we get this wrong, the entire
-                    ; (just ...) expressions will evaluate to an _arbitrary_
+                    ; (the ...) expressions will evaluate to an _arbitrary_
                     ; value of the same type (SMT-LIB 2, 5.3, definition 8.
                     ; Remark 11 spells it out), and thus would prevent any proof
                     ; from going through.
-                    (bvult (just (select (mi_prio mi) pd)) (just (select (mi_prio mi) (fst target))))
+                    (bvult (the (select (mi_prio mi) pd)) (the (select (mi_prio mi) (fst target))))
                     (relation_comm_endpoint_cap target
                         (select cnode (bvadd BASE_ENDPOINT_CAP (ch2word ch)))))
             )
@@ -481,7 +481,7 @@
             true
         (ite (and (is-NR_Notification mso) (is-Just kso))
             (let ((raised_flags (flags mso))
-                  (krnl_badge (snd (just kso))))
+                  (krnl_badge (snd (the kso))))
 
                 ; ASSUMPTION: num_bits(krnl_badge)=64 < 2^64 (obviously true)
                 ;
@@ -492,7 +492,7 @@
                         (= ((_ extract 0 0) (bvshl krnl_badge idx)) (_ bv1 1))
                         (and
                             (is-Just (word2ch idx))
-                            (select raised_flags (just (word2ch idx)))
+                            (select raised_flags (the (word2ch idx)))
                         )
                     )
                 )
