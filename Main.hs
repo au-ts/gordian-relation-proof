@@ -2,6 +2,7 @@
 {-# HLINT ignore "Use camelCase" #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Use camelCase" #-}
+{-# HLINT ignore "Use &&" #-}
 module Main (main) where
 
 import Data.Bits
@@ -87,7 +88,11 @@ relation_receive_oracle :: NextRecv -> Maybe (SeL4_MessageInfo, SeL4_Ntfn) -> Bo
 relation_receive_oracle NR_Unknown Nothing = True
 relation_receive_oracle (NR_Notification chs) (Just (_, knr_badge)) =
   knr_badge == sum (S.map (\ch -> 2^(indexOf ch)) chs)
-relation_receive_oracle (NR_PPCall (ch,mi)) _ = undefined -- TODO: define this
+relation_receive_oracle (NR_PPCall (ch,mi)) (Just (mi', knr_badge)) = -- undefined -- TODO: define this
+  -- mathieu
+  and [relation_msginfo mi mi'
+      , knr_badge == 2^63 + indexOf ch
+      ]
 relation_receive_oracle _ _ = False
 
 {- | __Memory Concurrency Safety Relation__

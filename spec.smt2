@@ -8,6 +8,7 @@
 ;
 
     (define-sort Word64 () (_ BitVec 64))
+    (define-sort Word16 () (_ BitVec 16))
     (declare-datatype Maybe (par (X) ((Nothing) (Just (the X)))))
     (declare-datatype Prod (par (X Y) ((Prod (fst X) (snd Y)))))
 
@@ -116,7 +117,7 @@
 
     (declare-datatype MsgInfo (
         (MI (mi_label Word64)
-            (mi_count Word64))
+            (mi_count Word16))
     ))
 
     (define-sort Prio () (_ BitVec 8))
@@ -413,6 +414,13 @@
         ))
     )
 
+    (define-fun relation_msg_info ((ms_msginfo MsgInfo) (ks_msginfo SeL4_MessageInfo)) Bool
+        (and
+            (= (mi_label ms_msginfo) (SeL4_mi_length ks_msginfo))
+            (= (mi_count ms_msginfo) (SeL4_mi_label ks_msginfo))
+        )
+    )
+
     ; DONE
     (define-fun relation_cap_map ((mi MicrokitInvariants) (pd PD) (ks KernelState)) Bool (and
 
@@ -497,8 +505,20 @@
                     )
                 )
             )
-        (ite ((_ is NR_PPCall) mso)
-            true ; FIXME: figure out and implement
+        (ite (and (is-NR_PPCall mso) (is-Just kso))
+            (let
+                (
+                    (ch (fst (ppcall mso)))
+                    (ms_msginfo (snd (ppcall mso)))
+                    (ks_msginfo (fst (the kso)))
+                    (ks_badge (snd (the kso)))
+                    (two63 (bvshl (_ bv1 64) (_ bv63 64)))
+                )
+                (and
+                    (relation_msg_info ms_msginfo ks_msginfo)
+                    (= ks_badge (bvadd two63 (ch2word ch)))
+                )
+            )
         ; else
             false
         )))
