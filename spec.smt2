@@ -441,19 +441,20 @@
         (forall ((inlet Inlet)) (let ((pd/ (fst inlet))
                                       (ch (snd inlet)))
             (=> (= pd pd/)
+                (select (mi_valid_irqns mi) inlet)
                 (relation_is_irq_cap (select (ks_thread_cnode ks)
                                         (bvadd BASE_IRQ_CAP (ch2word ch)))))
         ))
 
     ))
-
+;
     (define-fun relation_mmrs_mem ((mi MicrokitInvariants) (ks KernelState)) Bool
         (forall ((addr Word64) (r MMR))
             (=> (select (ks_local_mem_safe ks) addr)
                 (select (mi_mmrs mi) r)
                 ; if an address is memory safe for _me_, then I must be the only
                 ; PD with write access to it.
-                ; the Haskell spec is not right here
+                ; the Haskell spec is weird here
                 true
             )
         )
