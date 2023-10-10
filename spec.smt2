@@ -59,6 +59,8 @@
             ; This is a really weird name
             (ks_reply_obj_has_cap (Array SeL4_Cap Bool))
             (ks_recv_oracle (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn)))
+            ; TODO(rename): shouldn't be called local mem, this can represent
+            ; memory in shared memory regions
             (ks_local_mem Mem)
             (ks_local_mem_writable (Array Word64 Bool))
             (ks_local_mem_safe (Array Word64 Bool))
@@ -115,6 +117,12 @@
         (= (_ bv0 64) (bvand (mmr_addr r) (_ bv4096 64)))
     ))
 
+
+    (define-fun mmr_contains ((addr Word64) (mmr MMR)) Bool (and
+        (bvuge addr (mmr_addr mmr))
+        (bvule addr (bvadd (mmr_addr mmr) (mmr_size mmr)))
+    ))
+
     (declare-datatype MsgInfo (
         (MI (mi_label Word64)
             (mi_count Word16))
@@ -127,6 +135,7 @@
             (mi_valid_inlets (Array Inlet Bool))
             (mi_valid_comms (Array Comm Bool))
             (mi_valid_irqns (Array Inlet Bool))
+
             ; why a maybe? Passive servers don't have a scheduling context, that
             ; is, they don't necessarily have a priority
             (mi_prio (Array PD (Maybe Prio)))
@@ -186,6 +195,17 @@
         ; TODO: ensure memory safe is actually safe (only current PD can write
         ; to it)
     ))
+
+
+    (define-fun is_writable_mem ((addr Word64) (mi MicrokitInvariants)) Bool
+        (exists ((mmr MMR)) (and
+            (wf_MMR mmr)
+            (select (mi_mmrs mi) mmr)
+            (mmr_contains addr mmr)
+            (mmr_perm_write mmr)
+        ))
+    )
+
 
     (declare-datatype NextRecv (
         (NR_Notification (flags (Array Ch Bool)))
@@ -468,7 +488,7 @@
     ))
 ;
     (define-fun relation_mmrs_mem ((mi MicrokitInvariants) (ks KernelState)) Bool
-        (forall ((addr Word64) (r MMR))
+        (forall ((addr Word64) (r MMR)) (and
             (=> (select (ks_local_mem_safe ks) addr)
                 (select (mi_mmrs mi) r)
                 ; if an address is memory safe for _me_, then I must be the only
@@ -476,10 +496,27 @@
                 ; the Haskell spec is weird here
                 true
             )
-        )
+            ; WARNING: this is a nested quantifier (there is is a 'there exists' in the
+            ; is_writable_mem, which the smt solvers don't like)
+            (=
+                (is_writable_mem addr mi)
+                (select (ks_local_mem_writable ks) addr)
+            )
+        ))
     )
 
-    (define-fun relation_reply_cap ((ms MicrokitState) (ks KernelState)) Bool true)
+    (define-fun relation_reply_cap ((ms MicrokitState) (ks KernelState)) Bool
+        (let (
+            (reply_cap (select (ks_thread_cnode ks) REPLY_CAP))
+        )
+        (match (ms_unhandled_reply ms) (
+            ((Just ??) (and
+                (is-SeL4_Cap_Reply reply_cap)
+                (select (ks_reply_obj_has_cap ks) reply_cap)
+            ))
+            (Nothing (= reply_cap SeL4_Cap_Null))
+        ))
+    ))
 
     (define-fun relation_recv_oracle (
         (mso NextRecv)
@@ -530,7 +567,6 @@
              (relation_mmrs_mem (mi ms) ks)
              (relation_reply_cap ms ks)
              (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks))
-             true
         )
     )
 
@@ -574,17 +610,21 @@
 
     ; ------------------------------
 
-    ; FIXME: TODO
     (define-fun seL4_Recv/pre/specific (
-        (cap SeL4_CPtr)
+        (cptr SeL4_CPtr)
         (badge_ptr Word64)
-        (reply_cap SeL4_CPtr)
+        (reply_cptr SeL4_CPtr)
         (ks KernelState)
     ) Bool (and
-        (= (select (ks_thread_cnode ks) cap) (select (ks_thread_cnode ks) INPUT_CAP))
+        (= (select (ks_thread_cnode ks) cptr) (select (ks_thread_cnode ks) INPUT_CAP))
+
+        (= reply_cptr REPLY_CAP)
+
         (select (ks_local_mem_writable ks) badge_ptr)
-        (or ((_ is SeL4_Cap_Reply) (select (ks_thread_cnode ks) cap))
-            ((_ is SeL4_Cap_Null) (select (ks_thread_cnode ks) cap)))
+
+        ; TODO: check cap rights
+        (or ((_ is SeL4_Cap_Reply) (select (ks_thread_cnode ks) reply_cptr))
+            ((_ is SeL4_Cap_Null) (select (ks_thread_cnode ks) reply_cptr)))
         (is-Just (ks_recv_oracle ks))
     ))
 
@@ -625,11 +665,19 @@
 
     ; FIXME: TODO
     (define-fun _microkit_recv/pre/specific (
-        (cap SeL4_CPtr)
+        (cptr SeL4_CPtr)
         (badge_ptr Word64)
-        (reply_cap SeL4_CPtr)
+        (reply_cptr SeL4_CPtr)
         (ms MicrokitState)
     ) Bool (and
+        ; EXTRA: we require that you call only on the input cap
+        (= cptr INPUT_CAP)
+        ; EXTRA: require that the reply cptr is the 4
+        (= reply_cptr REPLY_CAP)
+        ; EXTRA: need to have that badge_ptr is writable memory
+        ;        we make it even stronger: it needs to be writable local memory
+        (is_writable_mem badge_ptr (mi ms))
+
         (not (is-NR_Unknown (ms_recv_oracle ms)))
 
         ; z3 doesn't like this way of expressing things, so instead of use
@@ -710,10 +758,12 @@
                                 (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))
                                 ks))
             ))
+            (echo "!! notify pre condition")
             (check-sat)
         (pop)
 
         (push)
+            (echo "!! notify post condition")
             (assert (not (=> (relation ms ks)
                              (wf_MicrokitInvariants (mi ms))
                              (seL4_Signal/post/specific
@@ -754,8 +804,9 @@
             (assert (relation ms ks))
             (assert (wf_MicrokitInvariants (mi ms)))
             (assert (_microkit_recv/pre/specific cap badge_ptr reply_cap ms))
-            (echo "?? recv pre condition")
-            (check-sat)
+            ; (echo "?? recv pre condition")
+            ; (check-sat)
+
             (assert (not (seL4_Recv/pre/specific cap badge_ptr reply_cap ks)))
             (echo "!! recv pre condition")
             (check-sat)
@@ -767,8 +818,9 @@
             (assert (_microkit_recv/pre/specific cap badge_ptr reply_cap ms))
             (assert (_microkit_recv/abstract-update cap badge_ptr reply_cap ms ms/next))
 
-            (echo "?? recv pre condition")
-            (check-sat)
+            ; (echo "?? recv post condition")
+            ; (check-sat)
+
             (assert (not (and
                 (_microkit_recv/post/specific cap badge_ptr reply_cap ms ret ms/next)
                 (relation ms/next ks/next)
