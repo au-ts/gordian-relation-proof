@@ -19,11 +19,11 @@
     (define-sort SeL4_ObjRef () Word64)
 
     (declare-datatype SeL4_CapRights (
-        (SeL4_CapRights (cr_send Bool) (cr_recv Bool) (cr_grant Bool) (cr_grant_reply Bool))
+        (SeL4_CapRights (cr_read Bool) (cr_write Bool) (cr_grant Bool) (cr_grant_reply Bool))
     ))
     (define-fun RW () SeL4_CapRights (SeL4_CapRights true true false false))
-    (define-fun R () SeL4_CapRights (SeL4_CapRights false true false false))
-    (define-fun W () SeL4_CapRights (SeL4_CapRights true false false false))
+    (define-fun R () SeL4_CapRights (SeL4_CapRights true false false false))
+    (define-fun W () SeL4_CapRights (SeL4_CapRights false true false false))
     (define-fun RWGP () SeL4_CapRights (SeL4_CapRights true true false true))
 
     (define-sort SeL4_IRQ () Word64)
