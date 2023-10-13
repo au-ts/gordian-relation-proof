@@ -683,7 +683,7 @@
 
         ; EXTRA: check rights on the cap
         (match (select (ks_thread_cnode ks) cptr) (
-            ((SeL4_Cap_Endpoint ?? ?? cap_rights) (cr_read cap_rights))
+            ((SeL4_Cap_Endpoint ?1 ?2 cap_rights) (cr_read cap_rights))
             (?? false)
         ))
 
@@ -833,6 +833,49 @@
         )))
     ))
 
+
+    ; -----------------
+
+    (define-fun microkit_ppcall/pre/specific ((ch Ch) (msginfo MsgInfo)) Bool
+        true
+    )
+    (define-fun microkit_ppcall/post/specific (
+        (ch Ch)
+        (msginfo MsgInfo)
+        (ms MicrokitState)
+        (ret MsgInfo)
+        (ms/next MicrokitState)
+    ) Bool
+        true
+    )
+
+    (define-fun microkit_ppcall/abstract-update (
+        (ch Ch)
+        (msginfo MsgInfo)
+        (ms MicrokitState)
+        (ms/next MicrokitState)
+    ) Bool
+        true
+    )
+
+    (define-fun seL4_Call/pre/specific (
+        (cptr SeL4_CPtr)
+        (msginfo SeL4_MessageInfo)
+        (ks KernelState)
+    ) Bool
+        true
+    )
+
+    (define-fun seL4_Call/post/specific (
+        (cptr SeL4_CPtr)
+        (msginfo SeL4_MessageInfo)
+        (ks KernelState)
+        (ret SeL4_MessageInfo)
+        (ks/next KernelState)
+    ) Bool
+        true
+    )
+
 (define-fun cast_msginfo ((msginfo SeL4_MessageInfo)) MsgInfo
     (MI (seL4_mi_length msginfo)
         (seL4_mi_label msginfo))
@@ -955,9 +998,6 @@
             (echo "!! irq_ack postcondition")
             (check-sat)
         (pop)
-
-
-
     (pop)
 
     (push) ; verify recv
@@ -1015,7 +1055,53 @@
             (echo "!! recv post condition")
             (check-sat)
         (pop)
+    (pop)
 
+    (push) ; verify ppcall
+        (declare-const ch Ch)
+        (declare-const cptr SeL4_CPtr)
+        (declare-const msginfo MsgInfo)
+        (declare-const ret MsgInfo)
+        (declare-const seL4_Call_ret SeL4_MessageInfo)
+        (declare-const seL4_msginfo SeL4_MessageInfo)
+
+        (assert (relation ms ks))
+        (assert (wf_MicrokitInvariants (mi ms)))
+
+        (assert (= ret (cast_msginfo seL4_Call_ret)))
+        ; note that in the program, the cast happens the other way. However,
+        ; we write it this way so that the middle fields are left
+        ; unspecified, and will prevent any proof that depends on them from
+        ; going through.
+        (assert (= msginfo (cast_msginfo seL4_msginfo)))
+
+        ; no need to check for overflow since they are unsigned int
+        (assert (= cptr (bvadd BASE_ENDPOINT_CAP (ch2word ch))))
+
+        (assert (microkit_ppcall/pre/specific ch msginfo))
+
+        (echo "?? trivial [consistency]")
+        (check-sat)
+
+        (push)
+            (assert (not (seL4_Call/pre/specific cptr seL4_msginfo ks)))
+            (echo "!! seL4_Call precondition")
+            (check-sat)
+        (pop)
+
+        (push)
+            (assert (seL4_Call/post/specific cptr seL4_msginfo ks seL4_Call_ret ks/next))
+            (assert (microkit_ppcall/abstract-update ch msginfo ms ms/next))
+
+            (assert (not (and
+                (relation ms/next ks/next)
+                (wf_MicrokitInvariants (mi ms/next))
+                (microkit_ppcall/post/specific ch msginfo ms ret ms/next)
+            )))
+
+            (echo "!! microkit_ppcall post condition")
+            (check-sat)
+        (pop)
     (pop)
 
 ;

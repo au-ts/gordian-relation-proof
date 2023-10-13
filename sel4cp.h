@@ -53,6 +53,8 @@ sel4cp_irq_ack(sel4cp_channel ch)
 static inline sel4cp_msginfo
 sel4cp_ppcall(sel4cp_channel ch, sel4cp_msginfo msginfo)
 {
+    // mathieu: this is not very tight, the user could pass extra stuff in the
+    // message info.
     return seL4_Call(BASE_ENDPOINT_CAP + ch, msginfo);
 }
 
