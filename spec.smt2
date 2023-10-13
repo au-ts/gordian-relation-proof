@@ -1,5 +1,6 @@
 (set-logic ALL)
 (set-option :produce-models true)
+(set-option :interactive-mode true)
 
 
 ;
@@ -44,6 +45,7 @@
                           (seL4_mi_caps_unwrapped Word64)
                           (seL4_mi_label (_ BitVec 16))))
     )
+
     (define-fun seL4_MessageInfo_zero () SeL4_MessageInfo
         (SeL4_MessageInfo (_ bv0 64) (_ bv0 64) (_ bv0 64) (_ bv0 16)))
 
@@ -399,7 +401,7 @@
         ))
     )
 
-    (define-fun relation_comm_notification_cap ((target_inlet Inlet) (cap SeL4_Cap)) Bool
+    (define-fun relation_inlet_notification_cap ((target_inlet Inlet) (cap SeL4_Cap)) Bool
         (let ((pd (fst target_inlet))
               (ch (snd target_inlet)))
             (match cap (
@@ -459,7 +461,7 @@
             (and
                 (=> (select (mi_valid_comms mi) comm)
                     (= pd pd/)
-                    (relation_comm_notification_cap target
+                    (relation_inlet_notification_cap target
                         (select cnode (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch)))))
                 (=> (select (mi_valid_comms mi) comm)
                     (= pd pd/)
@@ -469,8 +471,14 @@
                     ; nothing is not nothing. If we get this wrong, the entire
                     ; (the ...) expressions will evaluate to an _arbitrary_
                     ; value of the same type (SMT-LIB 2, 5.3, definition 8.
-                    ; Remark 11 spells it out), and thus would prevent any proof
+                    ; Remark 11 spells it out), and thus would prevent the proof
                     ; from going through.
+                    ;
+                    ; NOTE: the haskell spec uses >= on the Maybe Num type, but we
+                    ; use it on the actual Num. This doesn't matter because we have
+                    ; an invariant which ensures that all prio are Just x, not Nothing.
+                    ; (again, if we drop this invariant, this proof would fail, see
+                    ; point above)
                     (bvult (the (select (mi_prio mi) pd)) (the (select (mi_prio mi) (fst target))))
                     (relation_comm_endpoint_cap target
                         (select cnode (bvadd BASE_ENDPOINT_CAP (ch2word ch)))))
@@ -677,7 +685,6 @@
     ; (declare-const empty_ch_set (Array Ch Bool))
     ; (assert (forall ((ch Ch)) (not (select empty_ch_set ch))))
 
-    ; FIXME: TODO
     (define-fun _microkit_recv/pre/specific (
         (cptr SeL4_CPtr)
         (badge_ptr Word64)
@@ -750,7 +757,6 @@
     (declare-const arbitrary_message_info1 MsgInfo)
     (declare-const arbitrary_message_info2 MsgInfo)
 
-    ; FIXME: TODO
     (define-fun _microkit_recv/post/specific (
         (cptr SeL4_CPtr)
         (badge_ptr Word64)
@@ -765,7 +771,8 @@
         (= ret (match (ms_recv_oracle ms) (
             ((NR_Notification notifications) (MI (_ bv0 64) (_ bv0 16)))
             ((NR_PPCall ch_msginfo) (snd ch_msginfo))
-            (? arbitrary_message_info2)
+            (? arbitrary_message_info2) ; same as above, guaranteed not to happen because of
+                                        ; the precondition
         )))
     ))
 
@@ -778,17 +785,30 @@
 ; Verification
 ;
 
-    ; ; check that we don't have an obvious contradiction
-    ;
-    ; (push)
-    ;     (declare-const ks KernelState)
-    ;     (declare-const ms MicrokitState)
 
-    ;     (echo "Should be sat")
-    ;     (assert (wf_MicrokitInvariants (mi ms)))
-    ;     (assert (relation ms ks))
-    ;     (check-sat)
-    ; (pop)
+; to prove (a && b) --> (c && d)
+; you can (assert (not (=> a b (and c d)))) (and get unsat)
+;
+; or you can (more readable)
+;
+;    (assert a)
+;    (assert b)
+;    (assert (not (and c d)))
+;
+; proof !((a && b) --> (c && d)) = !(!(a && b) || (c && d))
+;                                = (a && b) && !(c && d)
+
+    ; check that we don't have an obvious contradiction
+
+    (push)
+        (declare-const ks KernelState)
+        (declare-const ms MicrokitState)
+
+        (echo "?? trivial check [consistency]")
+        (assert (wf_MicrokitInvariants (mi ms)))
+        (assert (relation ms ks))
+        (check-sat)
+    (pop)
 
     (declare-const ks KernelState)
     (declare-const ks/next KernelState)
@@ -808,49 +828,44 @@
         ; and the signal's post condition implies notify's post condition
 
         (push)
-            ; FIXME: prove no overflow
-            (assert (not (=> (relation ms ks)
-                             (wf_MicrokitInvariants (mi ms))
-                             (microkit_notify/pre/specific ch ms)
-                             (seL4_Signal/pre/specific
-                                (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))
-                                ks))
-            ))
+            ; TODO
+            ; (echo "notify: no overflow")
+            ; (check-sat)
+        (pop)
+
+        (push)
+            (assert (relation ms ks))
+            (assert (microkit_notify/pre/specific ch ms))
+            (assert (wf_MicrokitInvariants (mi ms)))
+
+            (echo "?? notify pre condition [consistency]")
+            (check-sat)
+
+            (assert (not (seL4_Signal/pre/specific (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch)) ks)))
             (echo "!! notify pre condition")
             (check-sat)
         (pop)
 
         (push)
+
+            (assert (relation ms ks))
+            (assert (wf_MicrokitInvariants (mi ms)))
+            (assert (seL4_Signal/post/specific (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch)) ks ks/next))
+            (assert (microkit_notify/abstract-update ch ms ms/next))
+
+            (echo "?? notify post condition [consistency]")
+            (check-sat)
+
+            (assert (not (and
+                (microkit_notify/post/specific ch ms ms/next)
+                (relation ms/next ks/next)
+                (wf_MicrokitInvariants (mi ms/next))
+            )))
             (echo "!! notify post condition")
-            (assert (not (=> (relation ms ks)
-                             (wf_MicrokitInvariants (mi ms))
-                             (seL4_Signal/post/specific
-                                (bvadd BASE_OUTPUT_NOTIFICATION_CAP (ch2word ch))
-                                ks
-                                ks/next)
-                             (microkit_notify/abstract-update ch ms ms/next)
-                             (and
-                                (microkit_notify/post/specific ch ms ms/next)
-                                (relation ms/next ks/next)
-                                (wf_MicrokitInvariants (mi ms/next))
-                             )
-             )))
             (check-sat)
         (pop)
+
     (pop)
-
-
-    ; to prove (a && b) --> (c && d)
-    ; you can (assert (not (=> a b (and c d)))) (and get unsat)
-    ;
-    ; or you can (more readable)
-    ;
-    ;    (assert a)
-    ;    (assert b)
-    ;    (assert (not (and c d)))
-    ;
-    ; proof !((a && b) --> (c && d)) = !(!(a && b) || (c && d))
-    ;                                = (a && b) && !(c && d)
 
     (push) ; verify recv
         (declare-const cptr SeL4_CPtr)
