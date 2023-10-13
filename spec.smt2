@@ -595,15 +595,13 @@
     )
     (define-fun seL4_Signal/post/specific ((cap SeL4_CPtr) (ks KernelState) (ks/next KernelState)) Bool (= ks ks/next))
 
-
-
     (define-fun microkit_notify/pre/specific ((ch Ch) (ms MicrokitState)) Bool
         (exists ((comm Comm)) (and (select (mi_valid_comms (mi ms)) comm)
                                    (= (fst comm) (Prod (ms_running_pd ms) ch))))
     )
     (define-fun microkit_notify/post/specific ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool (= ms ms/next))
 
-    ; This might seem a bit silly, but here's the idea  :
+    ; This might seem a bit silly, but here's the idea:
     ;
     ; We have an abstract state. Each function updates the concrete state
     ; (kernel) and the abstract state (microkit). The abstract state is updated
@@ -621,6 +619,26 @@
     ; ghost code), and then prove the post condition. In _this_ case, it just
     ; means assuming ms=ms/next and then proving ms=ms/next.
     (define-fun microkit_notify/abstract-update ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool (= ms ms/next))
+
+    (define-fun microkit_irq_ack/pre/specific ((ch Ch) (ms MicrokitState)) Bool
+        (select (mi_valid_irqns (mi ms)) (Prod (ms_running_pd ms) ch))
+    )
+
+    (define-fun microkit_irq_ack/post/specific ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool
+        (= ms ms/next)
+    )
+
+    (define-fun microkit_irq_ack/abstract-update ((ch Ch) (ms MicrokitState) (ms/next MicrokitState)) Bool
+        (= ms ms/next)
+    )
+
+    (define-fun seL4_IRQHandler_Ack/pre/specific ((cptr SeL4_CPtr) (ks KernelState)) Bool
+        (is-SeL4_Cap_IRQHandler (select (ks_thread_cnode ks) cptr))
+    )
+
+    (define-fun seL4_IRQHandler_Ack/post/specific ((cptr SeL4_CPtr) (ks KernelState) (ks/next KernelState)) Bool
+        (= ks/next ks)
+    )
 
 
     ; ------------------------------
@@ -814,6 +832,7 @@
     (declare-const ks/next KernelState)
     (declare-const ms MicrokitState)
     (declare-const ms/next MicrokitState)
+
     (push) ; verify microkit_notify
 
         (declare-const ch Ch)
@@ -861,6 +880,44 @@
             (echo "!! notify post condition")
             (check-sat)
         (pop)
+    (pop)
+
+    (push) ; verify irq_ack
+        (declare-const ch Ch)
+        (declare-const cptr SeL4_CPtr)
+        (declare-const msginfo MsgInfo)
+
+        (assert (relation ms ks))
+        (assert (wf_MicrokitInvariants (mi ms)))
+        (assert (microkit_irq_ack/pre/specific ch ms))
+
+        (assert (= cptr (bvadd BASE_IRQ_CAP (ch2word ch))))
+
+        (echo "?? irq_ack [consistency]")
+        (check-sat)
+
+        (push)
+            (assert (not (seL4_IRQHandler_Ack/pre/specific cptr ks)))
+            (echo "!! irq_ack precondition")
+            (check-sat)
+        (pop)
+
+        (push)
+
+            (assert (microkit_irq_ack/abstract-update ch ms ms/next))
+            (assert (seL4_IRQHandler_Ack/post/specific cptr ks ks/next))
+
+            (assert (not (and
+                (microkit_irq_ack/post/specific ch ms ms/next)
+                (relation ms/next ks/next)
+                (wf_MicrokitInvariants (mi ms/next))
+            )))
+
+            (echo "!! irq_ack postcondition")
+            (check-sat)
+        (pop)
+
+
 
     (pop)
 
