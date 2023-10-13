@@ -827,11 +827,8 @@
         ; need to prove that the notify's precondition implies signal's precondition
         ; and the signal's post condition implies notify's post condition
 
-        (push)
-            ; TODO
-            ; (echo "notify: no overflow")
-            ; (check-sat)
-        (pop)
+        ; Note that we don't check for overflow since they are channels
+        ; are _unsigned_ ints.
 
         (push)
             (assert (relation ms ks))
