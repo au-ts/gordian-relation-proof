@@ -1,5 +1,4 @@
- (set-logic ALL)
-; (set-option :incremental true)
+(set-logic ALL)
 (set-option :produce-models true)
 
 
@@ -527,21 +526,27 @@
         (ite (and (is-NR_Unknown mso) (is-Nothing kso))
             true
         (ite (and (is-NR_Notification mso) (is-Just kso))
-            (let ((raised_flags (flags mso))
-                  (krnl_badge (snd (the kso))))
+            (let (
+                (raised_flags (flags mso))
+                (krnl_badge (snd (the kso)))
+                (krnl_msginfo (fst (the kso)))
+            )
 
                 ; ASSUMPTION: num_bits(krnl_badge)=64 < 2^64 (obviously true)
                 ;
                 ; We prove: for all bit in the kernel badge, it is 1 iff there
                 ; is a corresponding flag and the flag is raised
-                (forall ((idx (_ BitVec 64)))
-                    (=
-                        (= ((_ extract 0 0) (bvshl krnl_badge idx)) (_ bv1 1))
-                        (and
-                            (is-Just (word2ch idx))
-                            (select raised_flags (the (word2ch idx)))
+                (and
+                    (forall ((idx (_ BitVec 64)))
+                        (=
+                            (= ((_ extract 0 0) (bvshl krnl_badge idx)) (_ bv1 1))
+                            (and
+                                (is-Just (word2ch idx))
+                                (select raised_flags (the (word2ch idx)))
+                            )
                         )
                     )
+                    (= krnl_msginfo seL4_MessageInfo_zero)
                 )
             )
         (ite (and (is-NR_PPCall mso) (is-Just kso))
@@ -565,10 +570,10 @@
 
     (define-fun relation ((ms MicrokitState) (ks KernelState)) Bool
         (and
-             (relation_cap_map (mi ms) (ms_running_pd ms) ks)
-             (relation_mmrs_mem (mi ms) ks)
-             (relation_reply_cap ms ks)
-             (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks))
+            (relation_cap_map (mi ms) (ms_running_pd ms) ks)
+            (relation_mmrs_mem (mi ms) ks)
+            (relation_reply_cap ms ks)
+            (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks))
         )
     )
 
@@ -627,6 +632,7 @@
         ; TODO: check cap rights
         (or ((_ is SeL4_Cap_Reply) (select (ks_thread_cnode ks) reply_cptr))
             ((_ is SeL4_Cap_Null) (select (ks_thread_cnode ks) reply_cptr)))
+
         (is-Just (ks_recv_oracle ks))
     ))
 
@@ -639,8 +645,8 @@
         (ret SeL4_MessageInfo)
         (ks/next KernelState)
     ) Bool (and
-        ((_ is-Just) (ks_recv_oracle ks))
-
+        ; from the precondition, we know that the recv_oracle is Just xx
+        ; so it's ok to call `the` on it
         (let (
             (rv (fst (the (ks_recv_oracle ks))))
             (badge_val (snd (the (ks_recv_oracle ks))))
@@ -658,8 +664,14 @@
             (ks_local_mem/ (store (ks_local_mem ks) badge_ptr badge_val))
         )
 
-        (= ks/next ((_ update-field ks_local_mem)
-            ((_ update-field ks_reply_obj_has_cap) ks ks_reply_obj_has_cap/) ks_local_mem/))
+        ; The haskell forgets to state that the oracle is consumed!
+        (let ((ks/ ks))
+        (let ((ks/ ((_ update-field ks_reply_obj_has_cap) ks/ ks_reply_obj_has_cap/)))
+        (let ((ks/ ((_ update-field ks_local_mem) ks/ ks_local_mem/)))
+        (let ((ks/ ((_ update-field ks_recv_oracle) ks (as Nothing (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn))))))
+        (and (= ks/next ks/)
+             (= ret rv))
+        ))))
     ))))
 
     ; (declare-const empty_ch_set (Array Ch Bool))
@@ -695,28 +707,72 @@
         (is-Nothing (ms_unhandled_reply ms))
     ))
 
-    ; FIXME: TODO
-    (define-fun _microkit_recv/abstract-update (
-        (cap SeL4_CPtr)
+    (declare-const arbitrary_ms MicrokitState)
+
+    (define-fun _microkit_recv/abstract-update-assumptions (
+        (cptr SeL4_CPtr)
         (badge_ptr Word64)
-        (reply_cap SeL4_CPtr)
+        (reply_cptr SeL4_CPtr)
         (ms MicrokitState)
 
         (ms/next MicrokitState)
-    ) Bool true)
+    ) Bool
+        (or (is-NR_Notification (ms_recv_oracle ms))
+            (is-NR_PPCall (ms_recv_oracle ms)))
+    )
+
+    (define-fun _microkit_recv/abstract-update (
+        (cptr SeL4_CPtr)
+        (badge_ptr Word64)
+        (reply_cptr SeL4_CPtr)
+        (ms MicrokitState)
+
+        (ms/next MicrokitState)
+    ) Bool (and
+        (= ms/next (match (ms_recv_oracle ms) (
+            ((NR_Notification notifications)
+                ((_ update-field ms_recv_oracle)
+                    ((_ update-field ms_unhandled_notified) ms notifications)
+                NR_Unknown)
+            )
+            ((NR_PPCall ppcall)
+                ((_ update-field ms_recv_oracle)
+                    ((_ update-field ms_unhandled_ppcall) ms (Just ppcall))
+                NR_Unknown)
+            )
+            (? arbitrary_ms) ; any proofs that will rely on this will fail
+                             ; regardless, we know we cannot reach this case
+                             ; if we can prove abstract-update-assumptions
+        )))
+    ))
+
+
+    (declare-const arbitrary_message_info1 MsgInfo)
+    (declare-const arbitrary_message_info2 MsgInfo)
 
     ; FIXME: TODO
     (define-fun _microkit_recv/post/specific (
-        (cap SeL4_CPtr)
+        (cptr SeL4_CPtr)
         (badge_ptr Word64)
-        (reply_cap SeL4_CPtr)
+        (reply_cptr SeL4_CPtr)
         (ms MicrokitState)
 
-        (ret SeL4_MessageInfo)
+        (ret MsgInfo)
         (ms/next MicrokitState)
-    ) Bool true)
+    ) Bool (and
+        (_microkit_recv/abstract-update cptr badge_ptr reply_cptr ms ms/next)
 
+        (= ret (match (ms_recv_oracle ms) (
+            ((NR_Notification notifications) (MI (_ bv0 64) (_ bv0 16)))
+            ((NR_PPCall ch_msginfo) (snd ch_msginfo))
+            (? arbitrary_message_info2)
+        )))
+    ))
 
+(define-fun cast_msginfo ((msginfo SeL4_MessageInfo)) MsgInfo
+    (MI (seL4_mi_length msginfo)
+        (seL4_mi_label msginfo))
+)
 
 ;
 ; Verification
@@ -797,19 +853,20 @@
     ;                                = (a && b) && !(c && d)
 
     (push) ; verify recv
-        (declare-const cap SeL4_CPtr)
+        (declare-const cptr SeL4_CPtr)
         (declare-const badge_ptr Word64)
-        (declare-const reply_cap SeL4_CPtr)
-        (declare-const ret SeL4_MessageInfo)
+        (declare-const reply_cptr SeL4_CPtr)
+        (declare-const ret MsgInfo)
+        (declare-const seL4_recv_ret SeL4_MessageInfo)
 
         (push) ; prove pre condition is established
             (assert (relation ms ks))
             (assert (wf_MicrokitInvariants (mi ms)))
-            (assert (_microkit_recv/pre/specific cap badge_ptr reply_cap ms))
+            (assert (_microkit_recv/pre/specific cptr badge_ptr reply_cptr ms))
             ; (echo "?? recv pre condition")
             ; (check-sat)
 
-            (assert (not (seL4_Recv/pre/specific cap badge_ptr reply_cap ks)))
+            (assert (not (seL4_Recv/pre/specific cptr badge_ptr reply_cptr ks)))
             (echo "!! recv pre condition")
             (check-sat)
         (pop)
@@ -817,16 +874,35 @@
         (push) ; prove post condition is established
             (assert (relation ms ks))
             (assert (wf_MicrokitInvariants (mi ms)))
-            (assert (_microkit_recv/pre/specific cap badge_ptr reply_cap ms))
-            (assert (_microkit_recv/abstract-update cap badge_ptr reply_cap ms ms/next))
+            (assert (_microkit_recv/pre/specific cptr badge_ptr reply_cptr ms))
+            (assert (seL4_Recv/post/specific cptr badge_ptr reply_cptr ks seL4_recv_ret ks/next))
+
+            (push)
+                (assert (not (_microkit_recv/abstract-update-assumptions cptr badge_ptr reply_cptr ms ms/next)))
+                (echo "!! abstract update assumption are valid")
+                (check-sat)
+            (pop)
+
+            (assert (_microkit_recv/abstract-update cptr badge_ptr reply_cptr ms ms/next))
+
+            ; implicit casting
+            (assert (= ret (cast_msginfo seL4_recv_ret)))
 
             ; (echo "?? recv post condition")
             ; (check-sat)
 
+            (push)
+                (echo "!! check error")
+                (assert (not (or
+                    (is-NR_Notification (ms_recv_oracle ms))
+                    (is-NR_PPCall (ms_recv_oracle ms)))))
+                (check-sat)
+            (pop)
+
             (assert (not (and
-                (_microkit_recv/post/specific cap badge_ptr reply_cap ms ret ms/next)
+                (_microkit_recv/post/specific cptr badge_ptr reply_cptr ms ret ms/next)
                 (relation ms/next ks/next)
-                (wf_MicrokitInvariants (mi ms))
+                (wf_MicrokitInvariants (mi ms/next))
             )))
             (echo "!! recv post condition")
             (check-sat)
