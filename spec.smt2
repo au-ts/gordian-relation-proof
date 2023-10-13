@@ -160,13 +160,13 @@
         (forall ((comm Comm)) (=> (select (mi_valid_comms mi) comm)
                                   (select (mi_valid_comms mi) (Prod (snd comm) (fst comm)))))
     )
+    
     (define-fun wf_MicrokitInvariants_4 ((mi MicrokitInvariants)) Bool
         (forall ((comm1 Comm) (comm2 Comm)) (=>
-                                             (select (mi_valid_comms mi) comm1)
-                                             (select (mi_valid_comms mi) comm2)
-                                             (or (distinct (fst comm1) (fst comm2))
-                                                 (distinct (snd comm1) (snd comm2)))
-                                             ))
+            (select (mi_valid_comms mi) comm1)
+            (select (mi_valid_comms mi) comm2)
+            (=> (= (fst comm1) (fst comm2))
+                (= (snd comm1) (snd comm2)))))
     )
 
     (define-fun wf_MicrokitInvariants_5 ((mi MicrokitInvariants)) Bool
