@@ -40,11 +40,13 @@
     (define-sort SeL4_CSpace () SeL4_CNode)
 
     (declare-datatype SeL4_MessageInfo (
-        (SeL4_MessageInfo (SeL4_mi_length Word64)
-                          (SeL4_mi_extra_caps Word64)
-                          (SeL4_mi_caps_unwrapped Word64)
-                          (SeL4_mi_label (_ BitVec 16))))
+        (SeL4_MessageInfo (seL4_mi_length Word64)
+                          (seL4_mi_extra_caps Word64)
+                          (seL4_mi_caps_unwrapped Word64)
+                          (seL4_mi_label (_ BitVec 16))))
     )
+    (define-fun seL4_MessageInfo_zero () SeL4_MessageInfo
+        (SeL4_MessageInfo (_ bv0 64) (_ bv0 64) (_ bv0 64) (_ bv0 16)))
 
     (define-sort SeL4_Ntfn () Word64)
 
@@ -436,8 +438,8 @@
 
     (define-fun relation_msg_info ((ms_msginfo MsgInfo) (ks_msginfo SeL4_MessageInfo)) Bool
         (and
-            (= (mi_label ms_msginfo) (SeL4_mi_length ks_msginfo))
-            (= (mi_count ms_msginfo) (SeL4_mi_label ks_msginfo))
+            (= (mi_label ms_msginfo) (seL4_mi_length ks_msginfo))
+            (= (mi_count ms_msginfo) (seL4_mi_label ks_msginfo))
         )
     )
 
