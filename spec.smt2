@@ -412,7 +412,7 @@
             ; Note: do we care about the endpoint's badge? I don't think so
             ; because we don't ever _send_ using this cap, we always receive from
             ; it.
-            ((SeL4_Cap_Endpoint objref badge cap_rights) (= cap_rights RW))
+            ((SeL4_Cap_Endpoint objref badge cap_rights) (= cap_rights RWGP))
             ; TODO: we shouldn't have a read right on that cap, but the capDL
             ; generates it that way right now. Fix capDL, and update this
             ; proof.
@@ -440,8 +440,7 @@
         )
     )
 
-    (define-fun relation_comm_endpoint_cap ((target_inlet Inlet) (cap SeL4_Cap)) Bool
-        ; FIXME: encode relation comm endpoint cap
+    (define-fun relation_inlet_endpoint_cap ((target_inlet Inlet) (cap SeL4_Cap)) Bool
         (let ((target_ch_number (snd target_inlet))
               (one63 (bvshl (_ bv1 64) (_ bv63 64))))
             (match cap (
@@ -449,7 +448,7 @@
                     ; FIXME 1: check obj_ref (fix:objref)
                     (= badge (bvor one63 (ch2word target_ch_number)))
                     (= cap_rights RWGP)
-                    ; TODO: same as above, we shouldn't have read writes
+                    ; TODO: same as above, we shouldn't have read rights
                 ))
                 (? false)
             ))
@@ -508,7 +507,7 @@
                     ; (again, if we drop this invariant, this proof would fail, see
                     ; point above)
                     (bvult (the (select (mi_prio mi) pd)) (the (select (mi_prio mi) (fst target))))
-                    (relation_comm_endpoint_cap target
+                    (relation_inlet_endpoint_cap target
                         (select cnode (bvadd BASE_ENDPOINT_CAP (ch2word ch)))))
             )
         ))
@@ -681,6 +680,12 @@
         (= reply_cptr REPLY_CAP)
 
         (select (ks_local_mem_writable ks) badge_ptr)
+
+        ; EXTRA: check rights on the cap
+        (match (select (ks_thread_cnode ks) cptr) (
+            ((SeL4_Cap_Endpoint ?? ?? cap_rights) (cr_read cap_rights))
+            (?? false)
+        ))
 
         (match (select (ks_thread_cnode ks) reply_cptr) (
             ; as far as I can tell, the reply cap doesn't need to have any

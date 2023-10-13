@@ -178,6 +178,7 @@ seL4_ReplyRecv_wp cap badge_ptr reply_cap prop kc = and
   [ kc_thread_cnode kc cap == kc_thread_cnode kc 1
   , badge_ptr `elem` kc_local_mem_writable kc
   , case kc_thread_cnode kc reply_cap of
+      -- mathieu: don't need any rights on the reply cap
       SeL4_Cap_Reply _ _ _  -> (kc_thread_cnode kc reply_cap) `elem` kc_reply_obj_has_cap kc
       _ -> False
   , kc_recv_oracle kc /= Nothing
@@ -213,3 +214,6 @@ seL4_IRQHandler_Ack cap prop kc = and
       _ -> False
   , prop () kc
   ]
+
+-- mathieu: seL4_Call precondition: need grantreply rights on endpoint cap
+
