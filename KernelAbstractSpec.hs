@@ -124,6 +124,9 @@ mem_update taddr value mem = \raddr -> if raddr == taddr then value else mem rad
 -}
 type KHeap = SeL4_ObjRef -> Word64
 
+-- mathieu: add a bound_notification field :: Maybe SeL4_Cap
+-- the TCP contains an `obj_ref option`, which, if non NULL,
+-- point to a notification object.
 data KernelContext = KC
   { kc_thread_cnode :: SeL4_CNode
   , kc_reply_obj_has_cap :: Set SeL4_Cap

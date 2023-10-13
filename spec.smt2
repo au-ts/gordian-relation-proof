@@ -19,16 +19,34 @@
     (define-sort SeL4_ObjRef () Word64)
 
     (declare-datatype SeL4_CapRights (
-        (SeL4_CapRights_mk (cr_send Bool) (cr_recv Bool) (cr_grant Bool) (cr_grant_reply Bool))
+        (SeL4_CapRights (cr_send Bool) (cr_recv Bool) (cr_grant Bool) (cr_grant_reply Bool))
     ))
+    (define-fun RW () SeL4_CapRights (SeL4_CapRights true true false false))
+    (define-fun R () SeL4_CapRights (SeL4_CapRights false true false false))
+    (define-fun W () SeL4_CapRights (SeL4_CapRights true false false false))
+    (define-fun RWGP () SeL4_CapRights (SeL4_CapRights true true false true))
 
     (define-sort SeL4_IRQ () Word64)
+
+    ; The Haskell spec has an extra field for the seL4 reply cap (it's seems
+    ; to me like it was based of the non-MCS version of the cap datatype in
+    ; the abstract spec (grep for `datatype cap`)).
+    ;
+    ; We are targeting MCS however, and the difference is that the reply cap
+    ; doesn't have the middle field master: bool.
+    ;
+    ; As far as I can tell, it was an implementation detail in the kernel (every
+    ; active TCB always had a master reply cap, and if they needed to give one
+    ; to another TCB, they would mint it) (grep for `setup_reply_master` in non-mcs
+    ; abstract spec and read comment above).
+    ;
+    ; TLDR: we don't have the 'master' field on the reply cap
 
     (declare-datatype SeL4_Cap (
         (SeL4_Cap_Null)
         (SeL4_Cap_Endpoint (ep_objref SeL4_ObjRef) (ep_badge Word64) (ep_cap_rights SeL4_CapRights))
         (SeL4_Cap_Notification (ntf_objref SeL4_ObjRef) (ntf_badge Word64) (ntf_cap_rights SeL4_CapRights))
-        (SeL4_Cap_Reply (rep_objref SeL4_ObjRef) (rep_what Bool) (rep_cap_rights SeL4_CapRights))
+        (SeL4_Cap_Reply (rep_objref SeL4_ObjRef) (rep_cap_rights SeL4_CapRights))
         (SeL4_Cap_IRQHandler (irq SeL4_IRQ))
     ))
 
@@ -394,9 +412,10 @@
             ; Note: do we care about the endpoint's badge? I don't think so
             ; because we don't ever _send_ using this cap, we always receive from
             ; it.
-            ;
-            ; FIXME 3: check cap rights
-            ((SeL4_Cap_Endpoint ep_objref ep_badge ep_cap_rights) true)
+            ((SeL4_Cap_Endpoint objref badge cap_rights) (= cap_rights RW))
+            ; TODO: we shouldn't have a read right on that cap, but the capDL
+            ; generates it that way right now. Fix capDL, and update this
+            ; proof.
             (? false)
         ))
     )
@@ -406,8 +425,16 @@
               (ch (snd target_inlet)))
             (match cap (
                 ; FIXME 1: check obj_ref (fix:objref)
-                ; FIXME 2: check cap rights
-                ((SeL4_Cap_Notification obj_ref badge ?) (= badge (bvshl (_ bv1 64) (ch2word ch))))
+                ((SeL4_Cap_Notification obj_ref badge cap_rights)
+                    (and
+                        (= badge (bvshl (_ bv1 64) (ch2word ch)))
+                        (= cap_rights RW)
+                        ; TODO: we shouldn't have the ability to read that
+                        ; notification word (ie. no read cap right), but
+                        ; looking at the CapDL, we do have that right => fix
+                        ; capDL generation and add this requirement here.
+                    )
+                )
                 (? false)
             ))
         )
@@ -418,10 +445,11 @@
         (let ((target_ch_number (snd target_inlet))
               (one63 (bvshl (_ bv1 64) (_ bv63 64))))
             (match cap (
-                ((SeL4_Cap_Endpoint obj_ref badge ?) (and
+                ((SeL4_Cap_Endpoint obj_ref badge cap_rights) (and
                     ; FIXME 1: check obj_ref (fix:objref)
-                    ; FIXME 2: check cap rights
                     (= badge (bvor one63 (ch2word target_ch_number)))
+                    (= cap_rights RWGP)
+                    ; TODO: same as above, we shouldn't have read writes
                 ))
                 (? false)
             ))
@@ -539,7 +567,6 @@
                 (krnl_badge (snd (the kso)))
                 (krnl_msginfo (fst (the kso)))
             )
-
                 ; ASSUMPTION: num_bits(krnl_badge)=64 < 2^64 (obviously true)
                 ;
                 ; We prove: for all bit in the kernel badge, it is 1 iff there
@@ -655,9 +682,16 @@
 
         (select (ks_local_mem_writable ks) badge_ptr)
 
-        ; TODO: check cap rights
-        (or ((_ is SeL4_Cap_Reply) (select (ks_thread_cnode ks) reply_cptr))
-            ((_ is SeL4_Cap_Null) (select (ks_thread_cnode ks) reply_cptr)))
+        (match (select (ks_thread_cnode ks) reply_cptr) (
+            ; as far as I can tell, the reply cap doesn't need to have any
+            ; special rights (inspect what the receive call did, and what you
+            ; need when invoking a reply cap). A Grant right on the reply cap
+            ; would mean that you are allowed to send capabilities _back_ to
+            ; the caller.
+            ((SeL4_Cap_Reply ?? cap_rights) true)
+            (SeL4_Cap_Null true)
+            (?? false)
+        ))
 
         (is-Just (ks_recv_oracle ks))
     ))
