@@ -295,6 +295,8 @@ protected_wp ch mi prop lc = and
   lc' = lc
     { lc_unhandled_ppcall = Nothing
     }
+-- weak specification: we'd need to set lc_unhandled_reply here!
+-- are we going to have to use another single use oracle?
 
 sel4cp_notify_wp :: Ch -> WP ()
 sel4cp_notify_wp ch prop lc = let ci' = ci lc in and

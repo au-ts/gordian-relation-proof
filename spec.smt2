@@ -2,6 +2,10 @@
 (set-option :produce-models true)
 (set-option :interactive-mode true)
 
+; (set-option :smt.mbqi false)
+(set-option :auto_config false)
+(set-option :well_sorted_check true)
+
 
 ;
 ; PRELIMINARIES
@@ -148,6 +152,30 @@
         (MI (mi_label Word64)
             (mi_count Word16))
     ))
+    (define-fun MsgInfo_zero () MsgInfo (MI (_ bv0 64) (_ bv0 16)))
+
+    ; block seL4_MessageInfo {
+    ;     field label 52
+    ;     field capsUnwrapped 3
+    ;     field extraCaps 2
+    ;     field length 7
+    ; }
+    ; -- seL4/libsel4/mode_include/64/sel4/shared_types.bf
+    (define-fun wf_MsgInfo ((msginfo MsgInfo)) Bool (and
+        (bvult (mi_label msginfo) (bvshl (_ bv1 64) (_ bv52 64)))
+        (bvult (mi_count msginfo) (bvshl (_ bv1 16) (_ bv7 16)))
+    ))
+
+    (push)
+        (assert (not (and
+            (wf_MsgInfo (MI #x000fffffffffffff #x0000))
+            (wf_MsgInfo (MI #x000ffffffffffffe (_ bv127 16)))
+            (not (wf_MsgInfo (MI #x000ffffffffffffe (_ bv128 16))))
+            (not (wf_MsgInfo (MI #x0010000000000000 (_ bv126 16))))
+        )))
+        (echo "!! wf_MsgInfo check off by one error ")
+        (check-sat)
+    (pop)
 
     (define-sort Prio () (_ BitVec 8))
 
@@ -550,7 +578,14 @@
                 (is-SeL4_Cap_Reply reply_cap)
                 (select (ks_reply_obj_has_cap ks) reply_cap)
             ))
-            (Nothing (= reply_cap SeL4_Cap_Null))
+            (Nothing
+                (or
+                    (is-SeL4_Cap_Null reply_cap)
+                    (is-SeL4_Cap_Reply reply_cap)
+                )
+                ; TODO: we can do better! you have an unhandled_ppcall iff you
+                ; have a reply cap!
+            )
         ))
     ))
 
@@ -833,6 +868,150 @@
         )))
     ))
 
+    ; ------------------------
+
+    (define-fun _microkit_ReplyRecv/pre/specific (
+        (cptr SeL4_CPtr)
+        (reply_tag MsgInfo)
+        (badge_ptr Word64)
+        (reply_cptr SeL4_CPtr)
+        (ms MicrokitState)
+    ) Bool
+        (and
+            ; EXTRA
+            (= cptr INPUT_CAP)
+            ; EXTRA
+            (= reply_cptr REPLY_CAP)
+            ; EXTRA
+            (is_writable_mem badge_ptr (mi ms))
+
+
+            (match (ms_recv_oracle ms) (
+                ((NR_Notification notifications) (exists ((ch Ch)) (select notifications ch)))
+                ((NR_PPCall ??) true)
+                (NR_Unknown false)
+            ))
+
+            (wf_MsgInfo reply_tag)
+            (= (ms_unhandled_notified ms) ((as const (Array Ch Bool)) false))
+
+            (is-Nothing (ms_unhandled_ppcall ms))
+            (is-Just (ms_unhandled_reply ms))
+        )
+    )
+
+    (declare-const arbitrary_ms2 MicrokitState)
+
+    (define-fun _microkit_ReplyRecv/abstract-update (
+        (cptr SeL4_CPtr)
+        (reply_tag MsgInfo)
+        (badge_ptr Word64)
+        (reply_cptr SeL4_CPtr)
+        (ms MicrokitState)
+    ) MicrokitState
+        (match (ms_recv_oracle ms) (
+            ((NR_Notification notifications)
+                (let ((ms/ ms))
+                (let ((ms/ ((_ update-field ms_recv_oracle) ms/ NR_Unknown)))
+                (let ((ms/ ((_ update-field ms_unhandled_notified) ms/ notifications)))
+                (let ((ms/ ((_ update-field ms_unhandled_reply) ms/ (as Nothing (Maybe MsgInfo)))))
+                (let ((ms/ ((_ update-field ms_last_handled_reply) ms/ (ms_unhandled_reply ms))))
+                ms/
+                )))))
+            )
+            ((NR_PPCall ppcall)
+                (let ((ms/ ms))
+                (let ((ms/ ((_ update-field ms_recv_oracle) ms/ NR_Unknown)))
+                (let ((ms/ ((_ update-field ms_unhandled_ppcall) ms/ (Just ppcall))))
+                (let ((ms/ ((_ update-field ms_unhandled_reply) ms/ (as Nothing (Maybe MsgInfo)))))
+                (let ((ms/ ((_ update-field ms_last_handled_reply) ms/ (ms_unhandled_reply ms))))
+                ms/
+                )))))
+            )
+            ; shouldn't happen, guaranteed by the _microkit_ReplyRecv/pre/specific
+            (NR_Unknown arbitrary_ms2)
+        ))
+    )
+
+    (define-fun _microkit_ReplyRecv/post/specific (
+        (cptr SeL4_CPtr)
+        (reply_tag MsgInfo)
+        (badge_ptr Word64)
+        (reply_cptr SeL4_CPtr)
+        (ms MicrokitState)
+        (ret MsgInfo)
+        (ms/next MicrokitState)
+    ) Bool
+        (and
+            (= ms/next (_microkit_ReplyRecv/abstract-update cptr reply_tag badge_ptr reply_cptr ms))
+
+            (match (ms_recv_oracle ms) (
+                ((NR_Notification notifications) (= ret MsgInfo_zero))
+                ((NR_PPCall ppcall) (= ret (snd ppcall)))
+                (NR_Unknown false) ; shouldn't happen - guaranteed by precondition
+            ))
+        )
+    )
+
+    (define-fun seL4_ReplyRecv/pre/specific (
+        (cptr SeL4_CPtr)
+        (reply_tag SeL4_MessageInfo)
+        (badge_ptr Word64)
+        (reply_cptr SeL4_CPtr)
+        (ks KernelState)
+    ) Bool
+        (and
+            (= (select (ks_thread_cnode ks) cptr) (select (ks_thread_cnode ks) INPUT_CAP))
+            (select (ks_local_mem_writable ks) badge_ptr)
+
+            (match (select (ks_thread_cnode ks) cptr) (
+                ((SeL4_Cap_Endpoint obj_ref badge cap_rights) (cr_read cap_rights))
+                (?? false)
+            ))
+
+            (match (select (ks_thread_cnode ks) reply_cptr) (
+                ((SeL4_Cap_Reply obj_ref cap_rights) true) ; no cap_rights on the reply cap needed
+                (?? false)
+            ))
+
+            (is-Just (ks_recv_oracle ks))
+        )
+    )
+
+    (define-fun seL4_ReplyRecv/post/specific (
+        (cptr SeL4_CPtr)
+        (reply_tag SeL4_MessageInfo)
+        (badge_ptr Word64)
+        (reply_cptr SeL4_CPtr)
+        (ks KernelState)
+        (ret SeL4_MessageInfo)
+        (ks/next KernelState)
+    ) Bool
+        (let (
+           (rv (fst (the (ks_recv_oracle ks))))
+           (badge_val (snd (the (ks_recv_oracle ks))))
+           (two63 (bvshl (_ bv1 64) (_ bv63 64)))
+        )
+
+        (let (
+            (ks_reply_obj_has_cap/
+                (store (ks_reply_obj_has_cap ks)
+                    (select (ks_thread_cnode ks) reply_cptr)
+                    (bvuge badge_val two63))
+            )
+            (ks_local_mem/ (store (ks_local_mem ks) badge_ptr badge_val))
+        )
+
+        (let ((ks/ ks))
+        (let ((ks/ ((_ update-field ks_local_mem) ks/ ks_local_mem/)))
+        (let ((ks/ ((_ update-field ks_reply_obj_has_cap) ks/ ks_reply_obj_has_cap/)))
+        (let ((ks/ ((_ update-field ks_recv_oracle) ks/ (as Nothing (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn))))))
+        (and
+            (= ks/next ks/)
+            (= ret rv)
+        )
+        ))))))
+    )
 
     ; -----------------
 
@@ -1039,7 +1218,7 @@
             (assert (relation ms ks))
             (assert (wf_MicrokitInvariants (mi ms)))
             (assert (_microkit_recv/pre/specific cptr badge_ptr reply_cptr ms))
-            ; (echo "?? recv pre condition")
+            ; (echo "?? recv precondition [consistency]")
             ; (check-sat)
 
             (assert (not (seL4_Recv/pre/specific cptr badge_ptr reply_cptr ks)))
@@ -1081,6 +1260,47 @@
                 (wf_MicrokitInvariants (mi ms/next))
             )))
             (echo "!! recv post condition")
+            (check-sat)
+        (pop)
+    (pop)
+
+    (push) ; verify ReplyRecv
+        (declare-const cptr SeL4_CPtr)
+        (declare-const seL4_reply_tag SeL4_MessageInfo)
+        (declare-const reply_tag MsgInfo)
+        (declare-const badge_ptr Word64)
+        (declare-const reply_cptr SeL4_CPtr)
+
+        (declare-const ret MsgInfo)
+        (declare-const seL4_ret SeL4_MessageInfo)
+
+        ; implicit casting
+        (assert (= ret (cast_msginfo seL4_ret)))
+        (assert (= reply_tag (cast_msginfo seL4_reply_tag)))
+
+        (assert (relation ms ks))
+        (assert (wf_MicrokitInvariants (mi ms)))
+        (assert (_microkit_ReplyRecv/pre/specific cptr reply_tag badge_ptr reply_cptr ms))
+
+        ; (echo "?? reply recv [consistency]")
+        ; (check-sat)
+
+        (push)
+            (assert (not (seL4_ReplyRecv/pre/specific cptr seL4_reply_tag badge_ptr reply_cptr ks)))
+            (echo "!! seL4_ReplyRecv precondition")
+            (check-sat)
+        (pop)
+
+        (push)
+            (assert (seL4_ReplyRecv/post/specific cptr seL4_reply_tag badge_ptr reply_cptr ks seL4_ret ks/next))
+            (assert (= ms/next (_microkit_ReplyRecv/abstract-update cptr reply_tag badge_ptr reply_cptr ms)))
+
+            (assert (not (and
+                (relation ms/next ks/next)
+                (wf_MicrokitInvariants (mi ms/next))
+                (_microkit_ReplyRecv/post/specific cptr reply_tag badge_ptr reply_cptr ms ret ms/next)
+            )))
+            (echo "!! _microkit_ReplyRecv postcondition")
             (check-sat)
         (pop)
     (pop)
@@ -1131,6 +1351,9 @@
             (check-sat)
         (pop)
     (pop)
+
+    ; TODO: proof that if relation for ks[mem], then relation holds for ks[mem']
+
 
 ;
 ; Tests

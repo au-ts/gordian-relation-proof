@@ -113,6 +113,15 @@ relation_mmrs_mem ci kc = and
 
   There is a dangling reply precisely if the reply object whose capability resides in
   the thread's @CNode@ holds a cap.
+
+  mathieu: that's not correct. _After_ having called Recv/ReplyRecv
+  (and receiving a _ppcall_), but _before_ having called protected, we have a
+  reply cap, but we don't have a reply msg. That is
+
+    lc_unhandled_reply lc == Nothing
+    && kc_thread_cnode kc 4 == SeL4_Cap_Endpoint
+
+  See `relation_reply_cap` in spec.smt2 for the fix.
 -}
 relation_reply_cap :: PlatformContext -> KernelContext -> Bool
 relation_reply_cap lc kc = case lc_unhandled_reply lc of
@@ -181,6 +190,8 @@ handler_loop_iter_post lc_unhandled_reply_pre lc_receive_oracle_pre lc = and
   , lc_receive_oracle lc == NR_Unknown
   , case lc_receive_oracle_pre of
       NR_Notification notis -> lc_last_handled_notified lc == notis
+      -- weak spec: what if we got a PPCall? We need to say that we have a
+      -- reply cap and a msginfo to reply.
       _ -> True
   ]
 

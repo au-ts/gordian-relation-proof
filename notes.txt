@@ -1,0 +1,36 @@
+Note 1
+======
+
+(The microkit has quite a weak spec, this is talking about how to make it
+stronger)
+
+We need to prove that after receiving a PPCall, we have a reply cap. But we can
+only know this if the caller had WGP rights on their cap. This will need
+to _assumed_ when proving the correctness of the projection in Isabelle, at
+least in the current design.
+
+Note 2
+======
+
+It might be worth thinking about proving some more generic projection first, and
+specializing for the microkit.
+
+Ideas: right now, KernelState is just one PD's perspective of the kernel. We are
+not pushing SMT solvers too hard yet (just one quantifier really), and they are
+going to get smarter in the next few years, so it might be worth trying to
+encode _more_ of the kernel, and do this proof in SMT.
+
+For this particular case, KernelState could encode the capabilities of all the
+PDs (I expect the SMT solver will be able to cope fine), and the projection we
+would have to prove would be more general.
+
+(match (select (ks_thread_cnode ks) reply_cptr) (
+    ((SeL4_Cap_Reply ?1 ?2) true)
+    (?? false)
+))
+
+Note 3
+======
+
+To reason about PPCall, I'm pretty sure we are going to have to use an oracle to
+predict what the user's _protected_ method will return.
