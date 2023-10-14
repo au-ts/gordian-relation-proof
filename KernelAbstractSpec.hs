@@ -217,3 +217,5 @@ seL4_IRQHandler_Ack cap prop kc = and
 
 -- mathieu: seL4_Call precondition: need grantreply rights on endpoint cap
 
+seL4_Call_wp :: SeL4_CPtr -> SeL4_MessageInfo -> KernelWP SeL4_MessageInfo
+seL4_Call_wp = undefined

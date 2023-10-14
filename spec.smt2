@@ -836,9 +836,29 @@
 
     ; -----------------
 
-    (define-fun microkit_ppcall/pre/specific ((ch Ch) (msginfo MsgInfo)) Bool
-        true
+    (define-fun microkit_ppcall/pre/specific ((ch Ch) (msginfo MsgInfo) (ms MicrokitState)) Bool
+        (exists ((comm Comm))
+            (let (
+                (pd1 (fst (fst comm)))
+                (ch1 (snd (fst comm)))
+                (pd2 (fst (snd comm)))
+                (ch2 (snd (snd comm)))
+            ) ; in
+                (and
+                    (select (mi_valid_comms (mi ms)) comm)
+                    (= pd1 (ms_running_pd ms))
+                    (= ch1 ch)
+                    (select (mi_provides_pp (mi ms)) pd2)
+                    (bvult (the (select (mi_prio (mi ms)) pd1)) (the (select (mi_prio (mi ms)) pd2)))
+
+                    ; safe guards
+                    (is-Just (select (mi_prio (mi ms)) pd1))
+                    (is-Just (select (mi_prio (mi ms)) pd2))
+                )
+            )
+        )
     )
+
     (define-fun microkit_ppcall/post/specific (
         (ch Ch)
         (msginfo MsgInfo)
@@ -846,7 +866,7 @@
         (ret MsgInfo)
         (ms/next MicrokitState)
     ) Bool
-        true
+        (= ms ms/next)
     )
 
     (define-fun microkit_ppcall/abstract-update (
@@ -855,7 +875,7 @@
         (ms MicrokitState)
         (ms/next MicrokitState)
     ) Bool
-        true
+        (= ms ms/next)
     )
 
     (define-fun seL4_Call/pre/specific (
@@ -863,7 +883,12 @@
         (msginfo SeL4_MessageInfo)
         (ks KernelState)
     ) Bool
-        true
+        (match (select (ks_thread_cnode ks) cptr) (
+            ((SeL4_Cap_Endpoint obj_ref badge cap_rights)
+                (and (cr_write cap_rights)
+                     (cr_grant_reply cap_rights)))
+            (?1 false)
+        ))
     )
 
     (define-fun seL4_Call/post/specific (
@@ -873,7 +898,10 @@
         (ret SeL4_MessageInfo)
         (ks/next KernelState)
     ) Bool
-        true
+        (= ks ks/next)
+        ; we don't specify what the return value of the call is, because from
+        ; the perspective of an individual PD, we don't know. We'll need to
+        ; look at the trace in a global proof to be able to do that.
     )
 
 (define-fun cast_msginfo ((msginfo SeL4_MessageInfo)) MsgInfo
@@ -1078,7 +1106,7 @@
         ; no need to check for overflow since they are unsigned int
         (assert (= cptr (bvadd BASE_ENDPOINT_CAP (ch2word ch))))
 
-        (assert (microkit_ppcall/pre/specific ch msginfo))
+        (assert (microkit_ppcall/pre/specific ch msginfo ms))
 
         (echo "?? trivial [consistency]")
         (check-sat)
