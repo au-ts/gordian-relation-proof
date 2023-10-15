@@ -83,6 +83,9 @@ data SeL4_MessageInfo = SeL4_MessageInfo
   into the IPC buffer of the waiting thread.
 
   Hence, we model `SeL4_Ntfn` as just the state of the notification word itself.
+
+  mathieu: that's true, but a `notification` actually contains more (in particular
+  information relating to bind notification).
 -}
 type SeL4_Ntfn = Word64
 -- NB this is unnecessary in the present spec

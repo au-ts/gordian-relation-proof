@@ -77,6 +77,8 @@
 
     (declare-datatype KernelState (
         (KS (ks_thread_cnode SeL4_CNode)
+            ; EXTRA: model bound notifications
+            (ks_bound_notification (Maybe SeL4_ObjRef))
             ; Mathieu: I suppose we want to allow a thread to hold multiple
             ; reply objects (eventhough right now the microkit never does
             ; this)?
@@ -254,7 +256,6 @@
             (mmr_perm_write mmr)
         ))
     )
-
 
     (declare-datatype NextRecv (
         (NR_Notification (flags (Array Ch Bool)))
@@ -491,7 +492,6 @@
         ; we must have an endpoint cap
         (relation_pd_input_cap pd (select (ks_thread_cnode ks) INPUT_CAP))
 
-
         ; if we have a communication channel
         ;     1. we must have a cap to the notification word
         ;     2. under the right condition, we must have a cap to the endpoint
@@ -623,12 +623,17 @@
         )))
     )
 
+    (define-fun relation_bound_notification ((ms MicrokitState) (ks KernelState)) Bool
+        (is-Just (ks_bound_notification ks))
+    )
+
     (define-fun relation ((ms MicrokitState) (ks KernelState)) Bool
         (and
             (relation_cap_map (mi ms) (ms_running_pd ms) ks)
             (relation_mmrs_mem (mi ms) ks)
             (relation_reply_cap ms ks)
             (relation_recv_oracle (ms_recv_oracle ms) (ks_recv_oracle ks))
+            (relation_bound_notification ms ks)
         )
     )
 
