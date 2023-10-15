@@ -50,8 +50,6 @@ handler_loop(void)
     seL4_MessageInfo_t reply_tag;
 
     for (;;) {
-        // inv: have_reply --> prev(is_endpoint)
-        // inv: have_reply <--> ghost_reply_tag != Nothing
         seL4_MessageInfo_t tag;
 
         if (have_reply) {
