@@ -4,7 +4,7 @@ TODO:
 1. DONE Strengthen relation
 2. DONE Figure out what to do for obj ref
 3. DONE Model notification binding
-4. proof mem
+4. DONE proof mem
 
 Spec is too weak
 ================

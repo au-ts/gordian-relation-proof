@@ -1367,6 +1367,15 @@
 
     ; TODO: proof that if relation for ks[mem], then relation holds for ks[mem']
 
+    (push)
+        (declare-const new_mem Mem)
+
+        (assert (relation ms ks))
+        (assert (not (relation ms ((_ update-field ks_local_mem) ks new_mem))))
+        (echo "!! Relation holds accross local memory writes")
+        (check-sat)
+    (pop)
+
 
 ;
 ; Tests
