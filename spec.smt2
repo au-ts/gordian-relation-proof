@@ -421,20 +421,6 @@
     ; notification cap is bound to our TCB
     (define-fun relation_pd_input_cap ((pd PD) (cap SeL4_Cap)) Bool
         (match cap (
-            ; FIXME 1: Endpoint could change (fix:objref)
-            ;
-            ; this isn't strong enough it just asserts that an endpoint cap is
-            ; there but what if a syscall replaces it with a different endpoint?
-            ; That would break correctness, but this relation wouldn't break.
-            ;
-            ; possible idea: set an arbitary, global variable
-            ; (PD -> InputCapObjRef) Even without knowing _what_ the object ref
-            ; is, we can assert that it never changes.
-            ;
-            ; If I don't come up with a better idea, I will implement this.
-            ; (delaying allows me to see what are all the places where I will
-            ; need this)
-            ;
             ; FIXME 2: Need to make sure that the endpoint is bound to the PD's TCB
             ;
             ; Note: do we care about the endpoint's badge? I don't think so
