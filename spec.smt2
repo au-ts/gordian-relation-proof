@@ -262,6 +262,8 @@
         ))
     )
 
+    (define-fun notifications_empty () (Array Ch Bool) ((as const (Array Ch Bool)) false))
+
     (declare-datatype NextRecv (
         (NR_Notification (flags (Array Ch Bool)))
         (NR_PPCall (ppcall (Prod Ch MsgInfo)))
@@ -707,8 +709,6 @@
     ) Bool (and
         (= (select (ks_thread_cnode ks) cptr) (select (ks_thread_cnode ks) INPUT_CAP))
 
-        (= reply_cptr REPLY_CAP)
-
         (select (ks_local_mem_writable ks) badge_ptr)
 
         ; EXTRA: check rights on the cap
@@ -765,7 +765,7 @@
             (ks_thread_cnode/ (store (ks_thread_cnode ks) reply_cptr new_reply_cap))
         )
 
-        ; The haskell forgets to state that the oracle is consumed!
+        ; EXTRA: The haskell forgets to state that the oracle is consumed!
         (let ((ks/ ks))
         (let ((ks/ ((_ update-field ks_reply_obj_has_cap) ks/ ks_reply_obj_has_cap/)))
         (let ((ks/ ((_ update-field ks_local_mem) ks/ ks_local_mem/)))
@@ -777,9 +777,6 @@
         )
         ))))))
     ))))
-
-    ; (declare-const empty_ch_set (Array Ch Bool))
-    ; (assert (forall ((ch Ch)) (not (select empty_ch_set ch))))
 
     (define-fun _microkit_recv/pre/specific (
         (cptr SeL4_CPtr)
@@ -795,16 +792,13 @@
         ;        we make it even stronger: it needs to be writable local memory
         (is_writable_mem badge_ptr (mi ms))
 
-        (not (is-NR_Unknown (ms_recv_oracle ms)))
+        (match (ms_recv_oracle ms) (
+            ((NR_Notification notifications) (distinct notifications notifications_empty))
+            ((NR_PPCall ??) true)
+            (NR_Unknown false)
+        ))
 
-        ; z3 doesn't like this way of expressing things, so instead of use
-        ; exists quantifier
-        ;
-        ; (distinct (ms_recv_oracle ms) (NR_Notification empty_ch_set))
-
-        (=> (is-NR_Notification (ms_recv_oracle ms))
-            (exists ((ch Ch)) (select (flags (ms_recv_oracle ms)) ch)))
-        (not (exists ((ch Ch)) (select (ms_unhandled_notified ms) ch)))
+        (= (ms_unhandled_notified ms) notifications_empty)
 
         (is-Nothing (ms_unhandled_ppcall ms))
         (is-Nothing (ms_unhandled_reply ms))
@@ -812,6 +806,7 @@
 
     (declare-const arbitrary_ms MicrokitState)
 
+    ; TODO: remove, this is superficial (guaranteed by the precondition)
     (define-fun _microkit_recv/abstract-update-assumptions (
         (cptr SeL4_CPtr)
         (badge_ptr Word64)
@@ -864,7 +859,6 @@
     ) Bool (and
         (_microkit_recv/abstract-update cptr badge_ptr reply_cptr ms ms/next)
 
-
         (match (ms_recv_oracle ms) (
             ((NR_Notification notifications) true) ; we got nothing to say about return value
             ((NR_PPCall ch_msginfo) (= ret (snd ch_msginfo)))
@@ -889,9 +883,8 @@
             ; EXTRA
             (is_writable_mem badge_ptr (mi ms))
 
-
             (match (ms_recv_oracle ms) (
-                ((NR_Notification notifications) (exists ((ch Ch)) (select notifications ch)))
+                ((NR_Notification notifications) (distinct notifications notifications_empty))
                 ((NR_PPCall ??) true)
                 (NR_Unknown false)
             ))
