@@ -1,16 +1,47 @@
-Note 1
-======
+TODO:
+=====
 
-(The microkit has quite a weak spec, this is talking about how to make it
-stronger)
+1. DONE Strengthen relation
+2. DONE Figure out what to do for obj ref
+3. DONE Model notification binding
+4. proof mem
 
-We need to prove that after receiving a PPCall, we have a reply cap. But we can
+Spec is too weak
+================
+
+The projection abstract too much state away, we won't be able to prove any
+properties. Here are two examples of things that the spec doesn't protect us
+from:
+
+1. The microkit call notify() could be implemented by sending two signals,
+zero signals, making making a ppcall, and we wouldn't know.
+
+2. A microkit implementation could be completely delete a notification word and
+then recreate it and regive everyone the correct caps. Our spec wouldn't tell
+the difference. But that
+
+3. We need to prove that after receiving a PPCall, we have a reply cap. But we can
 only know this if the caller had WGP rights on their cap. This will need
 to _assumed_ when proving the correctness of the projection in Isabelle, at
 least in the current design.
 
-Note 2
-======
+Mistakes in the haskell spec
+============================
+
+1. The relation_reply_cap is wrong. It's not true that if you don't have a reply
+msginfo, then you don't have a reply cap. You have a reply cap iff (you have a
+reply msginfo, or have a pending ppcall).
+
+2. seL4_Recv and seL4_ReplyRecv said that the reply cap you obtained *after* the
+call (in the case when you receive a ppcall) was the one you had *before*
+making the call (and you aren't even guaranteed to have one). The fix is to add
+the reply cap you obtain in the recv oracle.
+
+Pretty impressive to only get two mistakes without having anything to check but
+your own brain.
+
+Come up with general projection
+===============================
 
 It might be worth thinking about proving some more generic projection first, and
 specializing for the microkit.
@@ -29,8 +60,8 @@ would have to prove would be more general.
     (?? false)
 ))
 
-Note 3
-======
+Reasoning about ppcalls
+=======================
 
 To reason about PPCall, I'm pretty sure we are going to have to use an oracle to
 predict what the user's _protected_ method will return.

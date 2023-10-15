@@ -5,6 +5,7 @@
 ; (set-option :smt.mbqi false)
 (set-option :auto_config false)
 (set-option :well_sorted_check true)
+(set-option :timeout 15000) ; 15 seconds
 
 
 ;
@@ -75,6 +76,8 @@
 
     (define-sort Mem () (Array Word64 Word64))
 
+    (define-sort KernelOracle () (Prod (Prod SeL4_MessageInfo SeL4_Cap) SeL4_Ntfn))
+
     (declare-datatype KernelState (
         (KS (ks_thread_cnode SeL4_CNode)
             ; EXTRA: model bound notifications
@@ -85,7 +88,9 @@
             ;
             ; This is a really weird name
             (ks_reply_obj_has_cap (Array SeL4_Cap Bool))
-            (ks_recv_oracle (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn)))
+            ; EXTRA: the kernel oracle also contains the cap to the reply
+            ; object you obtain when you receive a ppcall
+            (ks_recv_oracle (Maybe KernelOracle))
             ; TODO(rename): shouldn't be called local mem, this can represent
             ; memory in shared memory regions
             (ks_local_mem Mem)
@@ -559,25 +564,21 @@
         (let (
             (reply_cap (select (ks_thread_cnode ks) REPLY_CAP))
         )
-        (match (ms_unhandled_reply ms) (
-            ((Just ??) (and
+        (ite (or
+            (is-Just (ms_unhandled_ppcall ms))
+            (is-Just (ms_unhandled_reply ms))
+        )
+            (and
+                true
                 (is-SeL4_Cap_Reply reply_cap)
                 (select (ks_reply_obj_has_cap ks) reply_cap)
-            ))
-            (Nothing
-                (or
-                    (is-SeL4_Cap_Null reply_cap)
-                    (is-SeL4_Cap_Reply reply_cap)
-                )
-                ; TODO: we can do better! you have an unhandled_ppcall iff you
-                ; have a reply cap!
             )
-        ))
+            (is-SeL4_Cap_Null reply_cap))
     ))
 
     (define-fun relation_recv_oracle (
         (mso NextRecv)
-        (kso (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn)))) Bool
+        (kso (Maybe KernelOracle))) Bool
 
         (ite (and (is-NR_Unknown mso) (is-Nothing kso))
             true
@@ -585,7 +586,8 @@
             (let (
                 (raised_flags (flags mso))
                 (krnl_badge (snd (the kso)))
-                (krnl_msginfo (fst (the kso)))
+                (krnl_msginfo (fst (fst (the kso))))
+                (new_reply_cap (snd (fst (the kso))))
             )
                 ; ASSUMPTION: num_bits(krnl_badge)=64 < 2^64 (obviously true)
                 ;
@@ -601,7 +603,7 @@
                             )
                         )
                     )
-                    (= krnl_msginfo seL4_MessageInfo_zero)
+                    (is-SeL4_Cap_Null new_reply_cap)
                 )
             )
         (ite (and (is-NR_PPCall mso) (is-Just kso))
@@ -609,13 +611,15 @@
                 (
                     (ch (fst (ppcall mso)))
                     (ms_msginfo (snd (ppcall mso)))
-                    (ks_msginfo (fst (the kso)))
+                    (ks_msginfo (fst (fst (the kso))))
+                    (new_reply_cap (snd (fst (the kso))))
                     (ks_badge (snd (the kso)))
                     (two63 (bvshl (_ bv1 64) (_ bv63 64)))
                 )
                 (and
                     (relation_msg_info ms_msginfo ks_msginfo)
                     (= ks_badge (bvadd two63 (ch2word ch)))
+                    (is-SeL4_Cap_Reply new_reply_cap)
                 )
             )
         ; else
@@ -730,7 +734,7 @@
     (define-fun seL4_Recv/post/specific (
         (cap SeL4_CPtr)
         (badge_ptr Word64)
-        (reply_cap SeL4_CPtr)
+        (reply_cptr SeL4_CPtr)
         (ks KernelState)
 
         (ret SeL4_MessageInfo)
@@ -739,30 +743,39 @@
         ; from the precondition, we know that the recv_oracle is Just xx
         ; so it's ok to call `the` on it
         (let (
-            (rv (fst (the (ks_recv_oracle ks))))
+            (rv (fst (fst (the (ks_recv_oracle ks)))))
+            (new_reply_cap (snd (fst (the (ks_recv_oracle ks)))))
             (badge_val (snd (the (ks_recv_oracle ks))))
             (two63 (bvshl (_ bv1 64) (_ bv63 64)))
+        )
+        (let (
+            (received_ppcall (bvuge badge_val two63))
         )
 
         (let (
             (ks_reply_obj_has_cap/
-                (store (ks_reply_obj_has_cap ks)
-                    (select (ks_thread_cnode ks) reply_cap)
-                    (bvuge badge_val two63))
-                ; add or remove reply_cap from reply_obj_has_cap set depending
-                ; on whether we received a PP call
+                (store
+                    (ks_reply_obj_has_cap ks)
+                    new_reply_cap
+                    received_ppcall
+                )
             )
             (ks_local_mem/ (store (ks_local_mem ks) badge_ptr badge_val))
+
+            (ks_thread_cnode/ (store (ks_thread_cnode ks) reply_cptr new_reply_cap))
         )
 
         ; The haskell forgets to state that the oracle is consumed!
         (let ((ks/ ks))
         (let ((ks/ ((_ update-field ks_reply_obj_has_cap) ks/ ks_reply_obj_has_cap/)))
         (let ((ks/ ((_ update-field ks_local_mem) ks/ ks_local_mem/)))
-        (let ((ks/ ((_ update-field ks_recv_oracle) ks (as Nothing (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn))))))
-        (and (= ks/next ks/)
-             (= ret rv))
-        ))))
+        (let ((ks/ ((_ update-field ks_recv_oracle) ks/ (as Nothing (Maybe KernelOracle)))))
+        (let ((ks/ ((_ update-field ks_thread_cnode) ks/ ks_thread_cnode/)))
+        (and
+            (= ks/next ks/)
+            (= ret rv)
+        )
+        ))))))
     ))))
 
     ; (declare-const empty_ch_set (Array Ch Bool))
@@ -851,12 +864,12 @@
     ) Bool (and
         (_microkit_recv/abstract-update cptr badge_ptr reply_cptr ms ms/next)
 
-        (= ret (match (ms_recv_oracle ms) (
-            ((NR_Notification notifications) (MI (_ bv0 64) (_ bv0 16)))
-            ((NR_PPCall ch_msginfo) (snd ch_msginfo))
-            (? arbitrary_message_info2) ; same as above, guaranteed not to happen because of
-                                        ; the precondition
-        )))
+
+        (match (ms_recv_oracle ms) (
+            ((NR_Notification notifications) true) ; we got nothing to say about return value
+            ((NR_PPCall ch_msginfo) (= ret (snd ch_msginfo)))
+            (? false) ; oracle wasn't consumed initially
+        ))
     ))
 
     ; ------------------------
@@ -937,7 +950,7 @@
             (= ms/next (_microkit_ReplyRecv/abstract-update cptr reply_tag badge_ptr reply_cptr ms))
 
             (match (ms_recv_oracle ms) (
-                ((NR_Notification notifications) (= ret MsgInfo_zero))
+                ((NR_Notification notifications) true) ; don't know anything about return value
                 ((NR_PPCall ppcall) (= ret (snd ppcall)))
                 (NR_Unknown false) ; shouldn't happen - guaranteed by precondition
             ))
@@ -953,6 +966,7 @@
     ) Bool
         (and
             (= (select (ks_thread_cnode ks) cptr) (select (ks_thread_cnode ks) INPUT_CAP))
+            ; EXTRA
             (select (ks_local_mem_writable ks) badge_ptr)
 
             (match (select (ks_thread_cnode ks) cptr) (
@@ -979,29 +993,43 @@
         (ks/next KernelState)
     ) Bool
         (let (
-           (rv (fst (the (ks_recv_oracle ks))))
+           (rv (fst (fst (the (ks_recv_oracle ks)))))
+           (new_reply_cap (snd (fst (the (ks_recv_oracle ks)))))
            (badge_val (snd (the (ks_recv_oracle ks))))
            (two63 (bvshl (_ bv1 64) (_ bv63 64)))
         )
 
         (let (
+            (received_ppcall (bvuge badge_val two63))
+        )
+
+        (let (
             (ks_reply_obj_has_cap/
-                (store (ks_reply_obj_has_cap ks)
-                    (select (ks_thread_cnode ks) reply_cptr)
-                    (bvuge badge_val two63))
+                (store
+                    (store
+                        (ks_reply_obj_has_cap ks)
+                        (select (ks_thread_cnode ks) reply_cptr)
+                        false
+                    )
+                    new_reply_cap
+                    received_ppcall
+                )
             )
             (ks_local_mem/ (store (ks_local_mem ks) badge_ptr badge_val))
+
+            (ks_thread_cnode/ (store (ks_thread_cnode ks) reply_cptr new_reply_cap))
         )
 
         (let ((ks/ ks))
         (let ((ks/ ((_ update-field ks_local_mem) ks/ ks_local_mem/)))
         (let ((ks/ ((_ update-field ks_reply_obj_has_cap) ks/ ks_reply_obj_has_cap/)))
-        (let ((ks/ ((_ update-field ks_recv_oracle) ks/ (as Nothing (Maybe (Prod SeL4_MessageInfo SeL4_Ntfn))))))
+        (let ((ks/ ((_ update-field ks_recv_oracle) ks/ (as Nothing (Maybe KernelOracle)))))
+        (let ((ks/ ((_ update-field ks_thread_cnode) ks/ ks_thread_cnode/)))
         (and
             (= ks/next ks/)
             (= ret rv)
         )
-        ))))))
+        ))))))))
     )
 
     ; -----------------
@@ -1252,6 +1280,7 @@
             )))
             (echo "!! recv post condition")
             (check-sat)
+
         (pop)
     (pop)
 

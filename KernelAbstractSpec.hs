@@ -192,6 +192,8 @@ seL4_ReplyRecv_wp cap badge_ptr reply_cap prop kc = and
     Nothing -> error "seL4_ReplyRecv_wp: precondition violation."
   new_reply_obj_has_cap = case kc_recv_oracle kc of
     Just (mi,badge) -> if badge >= 2^63
+      -- mathieu: that's not even correct... The reply object you get back isn't the
+      -- same reply object you replied to. Therefore the cap will be different.
       then kc_reply_obj_has_cap kc `union` singleton (kc_thread_cnode kc reply_cap)
       else kc_reply_obj_has_cap kc \\ singleton (kc_thread_cnode kc reply_cap)
     Nothing -> error "seL4_ReplyRecv_wp: precondition violation."
