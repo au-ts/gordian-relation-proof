@@ -1,13 +1,5 @@
-TODO:
-=====
-
-1. DONE Strengthen relation
-2. DONE Figure out what to do for obj ref
-3. DONE Model notification binding
-4. DONE proof mem
-
-Spec is too weak
-================
+Spec is really weak
+===================
 
 The projection abstract too much state away, we won't be able to prove any
 properties. Here are two examples of things that the spec doesn't protect us
@@ -18,12 +10,26 @@ zero signals, making making a ppcall, and we wouldn't know.
 
 2. A microkit implementation could be completely delete a notification word and
 then recreate it and regive everyone the correct caps. Our spec wouldn't tell
-the difference. But that
+the difference.
 
-3. We need to prove that after receiving a PPCall, we have a reply cap. But we can
-only know this if the caller had WGP rights on their cap. This will need
+3. We need to prove that after receiving a PPCall, we have a reply cap. But we
+can only know this if the caller had WGP rights on their cap. This will need
 to _assumed_ when proving the correctness of the projection in Isabelle, at
 least in the current design.
+
+**Conclusion**: the spec is really weak, and it will need to be strengthened, at
+  least for (1). For (2) we could say make an argument based on the fact that
+  PDs don't have the capabilities required to do such a thing, that is, based
+  on restrictions we put on _all_ microkit system. (3) will need to know about
+  those restrictions. Picture:
+
+  - Microkit system restrictions IMPLIES ability to prove properties about
+    microkit
+
+  - Microkit system restrictions
+        IMPLIES restrictions on the seL4 system (eg. cap distribution)
+        IMPLIES extra assumptions when proving the projection correct
+
 
 Mistakes in the haskell spec
 ============================
