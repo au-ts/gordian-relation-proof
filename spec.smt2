@@ -199,6 +199,7 @@
             (mi_provides_pp (Array PD Bool)))
     ))
 
+    ; if inlet=(pd, ch) is a valid inlet, then pd is a valid pd
     (define-fun wf_MicrokitInvariants_1 ((mi MicrokitInvariants)) Bool
         (forall ((inlet Inlet)) (=> (select (mi_valid_inlets mi) inlet)
                                     (select (mi_valid_pds mi) (fst inlet))))
@@ -422,18 +423,13 @@
 ;
 
 
-    ; FIXME: There's a mistake in the Haskell here. The input cap is always an
+    ; There's a mistake in the Haskell here. The input cap is always an
     ; endpoint cap, not a notification cap.
     ;
     ; This is where we will ensure that we have an endpoint cap, and that our
     ; notification cap is bound to our TCB
     (define-fun relation_pd_input_cap ((pd PD) (cap SeL4_Cap)) Bool
         (match cap (
-            ; FIXME 2: Need to make sure that the endpoint is bound to the PD's TCB
-            ;
-            ; Note: do we care about the endpoint's badge? I don't think so
-            ; because we don't ever _send_ using this cap, we always receive from
-            ; it.
             ((SeL4_Cap_Endpoint objref badge cap_rights) (= cap_rights RWGP))
             ; TODO: we shouldn't have a read right on that cap, but the capDL
             ; generates it that way right now. Fix capDL, and update this
@@ -446,7 +442,6 @@
         (let ((pd (fst target_inlet))
               (ch (snd target_inlet)))
             (match cap (
-                ; FIXME 1: check obj_ref (fix:objref)
                 ((SeL4_Cap_Notification obj_ref badge cap_rights)
                     (and
                         (= badge (bvshl (_ bv1 64) (ch2word ch)))
@@ -467,7 +462,6 @@
               (one63 (bvshl (_ bv1 64) (_ bv63 64))))
             (match cap (
                 ((SeL4_Cap_Endpoint obj_ref badge cap_rights) (and
-                    ; FIXME 1: check obj_ref (fix:objref)
                     (= badge (bvor one63 (ch2word target_ch_number)))
                     (= cap_rights RWGP)
                     ; TODO: same as above, we shouldn't have read rights
@@ -545,21 +539,38 @@
     ))
 ;
     (define-fun relation_mmrs_mem ((mi MicrokitInvariants) (ks KernelState)) Bool
-        (forall ((addr Word64) (r MMR)) (and
-            (=> (select (ks_local_mem_safe ks) addr)
-                (select (mi_mmrs mi) r)
-                ; if an address is memory safe for _me_, then I must be the only
-                ; PD with write access to it.
-                ; the Haskell spec is weird here
-                true
+        (and
+            (forall ((addr Word64) (mmr MMR) (mmr/ MMR))
+                (=> (select (ks_local_mem_safe ks) addr)
+                    (select (mi_mmrs mi) mmr)
+                    ; if an address is memory safe for _me_ (a PD), then I
+                    ; must be the only PD with write access to it. The
+                    ; Haskell spec is weird here, and it's not strong enough
+                    ; because relation_pd_obj_ref is always true. Instead, we
+                    ; express the same idea by ensuring that other regions
+                    ; cannot write to our memory safe regions. (I suppose
+                    ; that's one the things Zoltan meant when he wrote todo:
+                    ; additional clause for writability)
+                    (mmr_perm_write mmr)
+                    (mmr_perm_write mmr/)
+                    (= (mmr_pd mmr) (mmr_pd mmr/))
+
+                    ; maybe: additional clause for writability (this note is
+                    ; present in the Haskell spec, and I don't know if there are
+                    ; other clauses one would want to add, hence why I'm leaving
+                    ; this note)
+                )
             )
-            ; WARNING: this is a nested quantifier (there is is a 'there exists' in the
-            ; is_writable_mem, which the smt solvers don't like)
-            (=
-                (is_writable_mem addr mi)
-                (select (ks_local_mem_writable ks) addr)
+            (forall ((addr Word64))
+                ; WARNING: this is a nested quantifier (there is is a 'there
+                ; exists' in the is_writable_mem, which the smt solvers don't
+                ; like when trying to prove something false)
+                (=
+                    (is_writable_mem addr mi)
+                    (select (ks_local_mem_writable ks) addr)
+                )
             )
-        ))
+        )
     )
 
     (define-fun relation_reply_cap ((ms MicrokitState) (ks KernelState)) Bool
